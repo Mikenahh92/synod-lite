@@ -112,14 +112,42 @@ function App({ port }) {
   const titleW = paneInner - 25;              // icon+id+state+retries columns
   const rowBg = (i) => (i === sel ? C.accent : undefined);
 
+  // word-wrap title over up to 2 lines: line1 full titleW, line2 indented to title column
+  const wrapTitle = (title, w1, w2) => {
+    const words = title.split(/\s+/);
+    const l1 = [], l2 = [];
+    let cur = l1, w = w1;
+    for (const word of words) {
+      const len = cur.length ? cur.join(" ").length + 1 + word.length : word.length;
+      if (len <= w) cur.push(word);
+      else if (cur === l1) { cur = l2; w = w2; if (word.length <= w) l2.push(word); else { l1.push(word.slice(0, w1 - l1.join(" ").length - 1) + "…"); break; } }
+      else { l2.push(word.slice(0, w - l2.join(" ").length - 1) + "…"); break; }
+    }
+    return [l1.join(" "), l2.join(" ")];
+  };
+
   const line = (s, i) => {
     const icon = s.running ? "●" : s.state === "done" ? "✓" : s.state === "ready_for_user_review" ? "◆" : "○";
     const label = ((LABEL[s.state] ?? s.state) + (s.running ? "*" : "")).padStart(10);
-    const spacer = Math.max(2, titleW + 1 - s.title.slice(0, titleW).length); // clear column boundary (≥2 gap)
-    const row = ` ${icon} ${s.id} ${s.title.slice(0, titleW)}${" ".repeat(spacer)}${label} r${s.retries}${s.lastReview ? (s.lastReview.verdict === "PASS" ? "✓" : "✗") : " "}`;
-    return h(Text, { key: s.id, wrap: false, bold: i === sel,
-      color: i === sel ? "#0F1117" : (STATE_COLORS[s.state] ?? C.text), backgroundColor: rowBg(i) },
-      row.length > paneInner ? row.slice(0, paneInner - 1) + "…" : row);
+    const verdict = ` r${s.retries}${s.lastReview ? (s.lastReview.verdict === "PASS" ? "✓" : "✗") : " "}`;
+    const [t1, t2] = wrapTitle(s.title, titleW, titleW);
+    const head = ` ${icon} ${s.id} `;
+    const indent = " ".repeat(head.length);
+    const rows = [];
+    const mk = (key, body) => h(Text, { key, wrap: false, bold: i === sel,
+      color: i === sel ? "#0F1117" : (STATE_COLORS[s.state] ?? C.text), backgroundColor: rowBg(i) }, body);
+    if (!t2) {
+      const spacer = Math.max(2, titleW + 1 - t1.length);
+      rows.push(mk(s.id, `${head}${t1}${" ".repeat(spacer)}${label}${verdict}`));
+    } else {
+      // 2-line row: title split, status block only on line 1
+      const w2 = titleW - head.length;
+      const [a, b] = wrapTitle(s.title, titleW, w2);
+      const spacer = Math.max(2, titleW + 1 - a.length);
+      rows.push(mk(s.id, `${head}${a}${" ".repeat(spacer)}${label}${verdict}`));
+      if (b) rows.push(mk(s.id + ":2", `${indent}${b}`));
+    }
+    return rows;
   };
 
   const contentW = rightInner - 2; // 1 char left pad + 1 right margin
@@ -167,7 +195,7 @@ function App({ port }) {
           h(Text, { bold: true, color: C.accent, wrap: false }, String(stories.length)),
           h(Text, { bold: true, color: C.text, wrap: false }, ")")),
         start > 0 ? h(Text, { color: C.dim, wrap: false }, ` ↑ ${start} more`) : null,
-        ...visible.map(line),
+        ...visible.flatMap(line),
         (start + listH < stories.length) ? h(Text, { color: C.dim, wrap: false }, ` ↓ ${stories.length - start - listH} more`) : null,
         h(Box, { flexGrow: 1 }),
         h(Text, { color: C.dim }, ` ${state.runningIds.length} running · workers ${state.config.workers} · auto ${state.config.auto} · trunk ${state.config.trunk}`)),
