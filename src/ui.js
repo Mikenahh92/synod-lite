@@ -283,8 +283,18 @@ function App({ port }) {
 
   return h(Box, { flexDirection: "column", height: rows, backgroundColor: C.bg },
     h(Box, { height: 1, backgroundColor: C.panel },
-      h(Text, { bold: true, color: C.accent, wrap: false }, ` ◆ synod-lite · ${mode === "list" ? "stories" : (detailView?.id ?? "detail")}${" ".repeat(Math.max(1, cols - 13 - (mode === "list" ? 7 : (detailView?.id.length + 2)) - titleRight.length - 2))}`),
-      h(Text, { color: C.dim, wrap: false }, titleRight)),
+      (() => {
+        const st = mode === "detail" && detailView ? storiesAll.find(x => x.id === detailView.id) : null;
+        const left = ` ◆ synod-lite · ${mode === "list" ? "stories" : detailView ? detailView.id + " · " + (st?.title ?? "") : "detail"}`;
+        const l = fit(left, cols - titleRight.length - 1);
+        return [
+          h(Text, { bold: true, color: C.accent, wrap: false }, fit(` ◆ synod-lite · ${mode === "list" ? "stories" : (detailView?.id ?? "detail")}`, l.length)),
+          ...(mode === "detail" && detailView
+            ? [h(Text, { bold: true, color: C.text, wrap: false }, fit(` · ${st?.title ?? ""}`, Math.max(0, cols - titleRight.length - 1 - (detailView.id.length + 13))))]
+            : [h(Text, { color: C.dim, wrap: false }, " ".repeat(Math.max(1, cols - 13 - 7 - titleRight.length - 2)))]),
+          h(Text, { color: C.dim, wrap: false }, mode === "list" ? titleRight : " ".repeat(1)),
+        ];
+      })()),
     h(Box, { flexDirection: "row", height: paneH },
       mode === "list"
         ? h(Box, { borderStyle: "single", borderColor: C.border, backgroundColor: C.panel, flexDirection: "column", width: mainW },
@@ -311,22 +321,35 @@ function App({ port }) {
                     ? "× spec LOCKED — past spec stage (edits via harness actions only)"
                     : "● spec editable — story not yet in development";
                   return [
-                    // fixed header
-                    h(Box, { flexDirection: "row", key: "hd" },
-                      h(Text, { bold: true, color: C.text, wrap: false }, ` ${detailView.id} · `),
-                      h(Text, { bold: true, wrap: false, color: STATE_COLORS[detailView.state] ?? C.text },
-                        fit(st?.title ?? "", mainInner - detailView.id.length - 3))),
+                    // fixed header (title lives in the top bar)
                     h(Text, { wrap: false, color: STATE_COLORS[detailView.state] ?? C.text, key: "st" },
                       ` state ${detailView.state} · retries ${st?.retries ?? "?"}${st?.lastReview ? ` · review ${st.lastReview.verdict}` : ""}`),
                     h(Text, { wrap: false, color: doc.name === "Spec" ? (detailView.locked ? C.red : C.green) : C.border, key: "lk" },
                       ` ${fit(doc.name === "Spec" ? lockLine : " ".repeat(lockLine.length), mainInner)}`),
-                    // doc tabs
-                    h(Text, { wrap: false, color: C.dim, key: "tabs" },
-                      ` ${fit(detailView.docs.map((d, i) => i === detailView.di ? `[${d.name}]` : ` ${d.name} `).join("│"), mainInner - 2)}`),
                     // scrollable body — soft-wrapped, never wider than the pane
                     ...win.map((l, i) => h(Text, { key: "b" + i, wrap: false, color: C.text }, ` ${l}`)),
                     h(Box, { flexGrow: 1 }),
-                    h(Text, { color: C.dim, wrap: false }, ` ${clamped}/${all.length} lines · ${detailView.di + 1}/${detailView.docs.length} docs`),
+                    h(Text, { color: C.dim, wrap: false }, ` ${clamped}/${all.length} lines`),
+                    // doc banner: ascii-framed tabs spread across the pane, ←→ changes selection
+                    h(Box, { flexDirection: "row", key: "banner" },
+                      (() => {
+                        const W = mainInner - 2;
+                        const n = detailView.docs.length;
+                        const slot = Math.floor(W / n);
+                        const parts = [h(Text, { color: C.border, wrap: false }, " ┤")];
+                        const lastLead = { v: 1 };
+                        detailView.docs.forEach((d, i) => {
+                          const sel = i === detailView.di;
+                          const label = sel ? `[${d.name}]` : d.name;
+                          const lead = Math.max(1, Math.floor((slot - label.length) / 2));
+                          if (i === n - 1) lastLead.v = lead; // carry pad to the closing ├ (leading spaces survive)
+                          parts.push(h(Text, { wrap: false, bold: sel,
+                            color: sel ? C.accent : C.dim }, " ".repeat(lead) + fit(label, slot - lead)));
+                          if (i < n - 1) parts.push(h(Text, { color: C.border, wrap: false }, "│"));
+                        });
+                        parts.push(h(Text, { color: C.border, wrap: false }, " ".repeat(lastLead.v) + "├"));
+                        return parts;
+                      })()),
                   ];
                 })()
               : h(Text, { color: C.dim }, " (no story)")),
