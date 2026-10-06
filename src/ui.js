@@ -1,4 +1,6 @@
 // synod-lite TUI — ink dashboard (no JSX build step: plain createElement)
+// Two full-page modes: list (filter/navigate) ↔ detail (paged documents, fixed header).
+// Chat is a toggleable right column in both modes; typing goes straight to chat when open.
 import React, { useEffect, useState, useCallback } from "react";
 import { render, Box, Text, useInput, useApp, useStdout } from "ink";
 import { spawn } from "node:child_process";
@@ -23,6 +25,7 @@ const LABEL = {
   ready_for_merge: "MERGEABLE", done: "DONE", blocked: "BLOCKED",
   failed: "FAILED", cancelled: "CANCELLED",
 };
+const STATUS_FILTERS = ["all", "active", "done", "blocked"];
 const trunc = (t, n) => (t.length > n ? t.slice(0, Math.max(0, n - 1)) + "…" : t).padEnd(n);
 const fit = (t, n) => (t.length > n ? t.slice(0, Math.max(0, n - 1)) + "…" : t);
 
@@ -36,10 +39,11 @@ function App({ port }) {
   const [state, setState] = useState(null);
   const [sel, setSel] = useState(0);
   const [msg, setMsg] = useState("");
-  const [showLog, setShowLog] = useState(false);
-  const [composer, setComposer] = useState(null); // { buf } while typing (new story or chat)
-  const [chat, setChat] = useState(null);          // { msgs: [{role, text}] } when chat column open
-  const [specView, setSpecView] = useState(null);  // { id, title, lines, scroll, locked } when spec page open
+  const [mode, setMode] = useState("list");           // list | detail
+  const [composer, setComposer] = useState(null);     // { kind: "new"|"filter"|"chat", buf }
+  const [chat, setChat] = useState(null);             // { msgs: [{role, text}], busy }
+  const [filter, setFilter] = useState({ text: "", status: "all" });
+  const [detailView, setDetailView] = useState(null); // { id, docs: [{name, lines}], di, scroll, locked, state }
 
   useEffect(() => {
     const iv = setInterval(() => fetchState(port).then(setState).catch(() => {}), 1000);
@@ -47,8 +51,13 @@ function App({ port }) {
     return () => clearInterval(iv);
   }, [port]);
 
-  const stories = state?.stories ?? [];
-  const cur = stories[Math.min(sel, stories.length - 1)];
+  const storiesAll = state?.stories ?? [];
+  const filtered = storiesAll.filter(s =>
+    (filter.status === "all" ? true
+      : filter.status === "active" ? !["done", "cancelled"].includes(s.state)
+      : s.state === filter.status))
+    .filter(s => !filter.text || `${s.id} ${s.title}`.toLowerCase().includes(filter.text.toLowerCase()));
+  const cur = filtered[Math.min(sel, filtered.length - 1)] ?? storiesAll[0];
 
   const act = useCallback(async (action, args = {}) => {
     if (!cur && action !== "new") return;
@@ -62,58 +71,110 @@ function App({ port }) {
   const sendChat = useCallback(async (text) => {
     setChat(c => ({ ...(c ?? { msgs: [] }), msgs: [...(c?.msgs ?? []), { role: "you", text }], busy: true }));
     try {
-      const r = await callDaemon(port, "chat", undefined, { message: text, focus: cur?.id });
+      const r = await callDaemon(port, "chat", undefined, {
+        message: text,
+        focus: cur?.id,
+        doc: mode === "detail" && detailView?.id === cur?.id ? detailView.docs[detailView.di]?.name : undefined,
+      });
       setChat(c => ({ msgs: [...c.msgs, { role: "agent", text: r.reply },
         ...(r.action ? [{ role: "action", text: `${r.action} → ${r.actionResult}` }] : [])], busy: false }));
     } catch (e) {
       setChat(c => ({ msgs: [...c.msgs, { role: "agent", text: `✗ ${e.message}` }], busy: false }));
     }
+  }, [port, cur, mode, detailView]);
+
+  const openDetail = useCallback(async (story) => {
+    if (!story) return;
+    try {
+      const r = await callDaemon(port, "spec", story.id);
+      setDetailView({
+        id: story.id,
+        docs: [
+          { name: "Details", lines: null }, // built live at render
+          { name: "Spec", lines: (r.spec ?? "(no spec authored yet)").split("\n") },
+          { name: "Test design", lines: (r.testDesign ?? "(none)").split("\n") },
+          { name: "Review", lines: (r.review ?? "(no review yet)").split("\n") },
+          { name: "Log", lines: null }, // live tail
+        ],
+        di: 1, scroll: 0, locked: r.locked, state: r.state,
+      });
+      setMode("detail");
+    } catch (e) { setMsg(`✗ ${e.message}`); setTimeout(() => setMsg(""), 4000); }
   }, [port]);
 
   useInput((ch, key) => {
-    // ── composer (new story / chat message) ────────────────
+    // ── chat open: every printable key goes to the chat buffer ──
+    if (chat && !composer) {
+      if (key.escape) { setChat(null); return; }
+      if (key.return) { const t = (chat.draft ?? "").trim(); if (t) { setChat({ ...chat, draft: "" }); sendChat(t); } return; }
+      if (key.backspace || key.delete) { setChat({ ...chat, draft: (chat.draft ?? "").slice(0, -1) }); return; }
+      if (ch && ch.length === 1 && !key.ctrl && !key.meta) { setChat({ ...chat, draft: (chat.draft ?? "") + ch }); return; }
+      return;
+    }
+    // ── composer (new story / list filter) ────────────────────
     if (composer) {
-      if (key.escape) { setComposer(null); return; }
+      if (key.escape) { setComposer(null); if (composer.kind === "filter") setFilter(f => ({ ...f, text: "" })); return; }
       if (key.return) {
         const text = composer.buf.trim();
         setComposer(null);
-        if (!text) { setMsg("(empty — cancelled)"); return; }
-        if (chat) sendChat(text); else act("new", { title: text });
+        if (!text) { if (composer.kind === "filter") setFilter(f => ({ ...f, text: "" })); return; }
+        if (composer.kind === "new") act("new", { title: text });
+        else setFilter(f => ({ ...f, text }));
         return;
       }
-      if (key.backspace || key.delete) { setComposer({ buf: composer.buf.slice(0, -1) }); return; }
-      if (ch && ch.length === 1 && !key.ctrl && !key.meta) { setComposer({ buf: (composer.buf + ch).slice(0, 80) }); return; }
+      if (key.backspace || key.delete) { setComposer({ ...composer, buf: composer.buf.slice(0, -1) }); return; }
+      if (ch && ch.length === 1 && !key.ctrl && !key.meta) { setComposer({ ...composer, buf: (composer.buf + ch).slice(0, 80) }); return; }
       return;
     }
-    if (key.escape && specView) { setSpecView(null); return; }
-    if (key.escape && chat) { setChat(null); return; }
-    if (key.return && showLog) { setShowLog(false); return; }
-    if (showLog) return;
+    if (key.escape) {
+      if (mode === "detail") { setMode("list"); return; }
+      if (filter.text || filter.status !== "all") { setFilter({ text: "", status: "all" }); return; }
+      return;
+    }
+    // ── arrows + enter: handled explicitly (switch(ch) can't match them) ──
+    if (key.upArrow) {
+      if (mode === "list") setSel(s => Math.max(0, s - 1));
+      else setDetailView(v => v && ({ ...v, scroll: Math.max(0, v.scroll - 1) }));
+      return;
+    }
+    if (key.downArrow) {
+      if (mode === "list") setSel(s => Math.min(s + 1, filtered.length - 1));
+      else setDetailView(v => v && ({ ...v, scroll: Math.min(v.scroll + 1, Math.max(0, detailLines(v).length)) }));
+      return;
+    }
+    if (key.leftArrow) {
+      if (mode === "detail") setDetailView(v => v && ({ ...v, di: (v.di + v.docs.length - 1) % v.docs.length, scroll: 0 }));
+      return;
+    }
+    if (key.rightArrow) {
+      if (mode === "detail") setDetailView(v => v && ({ ...v, di: (v.di + 1) % v.docs.length, scroll: 0 }));
+      return;
+    }
+    if (key.return) {
+      if (mode === "list") openDetail(cur);
+      return;
+    }
+    if (!ch || ch.length !== 1 || key.ctrl || key.meta) return;
     switch (ch) {
       case "q": exit(); break;
-      case "j": case key.downArrow:
-        if (specView) setSpecView(v => ({ ...v, scroll: Math.min(v.scroll + 1, Math.max(0, v.lines.length)) }));
-        else setSel(s => Math.min(s + 1, stories.length - 1)); break;
-      case "k": case key.upArrow:
-        if (specView) setSpecView(v => ({ ...v, scroll: Math.max(0, v.scroll - 1) }));
-        else setSel(s => Math.max(s - 1, 0)); break;
-      case "n": setComposer({ buf: "" }); break;
-      case "c": setChat(chat ? null : { msgs: [] }); break;
+      case "j":
+        if (mode === "list") setSel(s => Math.min(s + 1, filtered.length - 1));
+        else setDetailView(v => v && ({ ...v, scroll: Math.min(v.scroll + 1, Math.max(0, detailLines(v).length)) }));
+        break;
+      case "k":
+        if (mode === "list") setSel(s => Math.max(0, s - 1));
+        else setDetailView(v => v && ({ ...v, scroll: Math.max(0, v.scroll - 1) }));
+        break;
+      case "n": setComposer({ kind: "new", buf: "" }); break;
+      case "f": if (mode === "list") setComposer({ kind: "filter", buf: filter.text }); break;
+      case "s":
+        if (mode === "list") setFilter(f => ({ ...f, status: STATUS_FILTERS[(STATUS_FILTERS.indexOf(f.status) + 1) % STATUS_FILTERS.length] }));
+        break;
+      case "c": setChat({ msgs: [], draft: "" }); break; // opens chat; typing goes straight in
       case "a": act("approve"); break;
       case "r": act("retry"); break;
       case "m": act("merge"); break;
       case "K": act("kill"); break;
-      case "l": setShowLog(true); break;
-    case "s": {
-      if (specView) setSpecView(null);
-      else if (cur) callDaemon(port, "spec", cur.id).then(r =>
-        setSpecView({ id: cur.id, title: cur.title, lines: [
-          ...(r.spec ?? "(no spec authored yet)").split("\n"),
-          "", "── test design ──", ...(r.testDesign ?? "(none)").split("\n"),
-          ...(r.review ? ["", "── last review ──", ...r.review.split("\n")] : []),
-        ], scroll: 0, locked: r.locked, state: r.state })).catch(e => setMsg(`✗ ${e.message}`));
-      break;
-    }
     }
   });
 
@@ -121,14 +182,14 @@ function App({ port }) {
 
   // deterministic column math — rows can never overflow their pane
   const cols = stdout?.columns || 110;
-  const listW = Math.floor((cols - 2) * 0.6);  // story list gets the wide share
-  const rightW = cols - 2 - listW;            // detail/chat pane
-  const paneInner = listW - 2;                // border chars (row math)
-  const rightInner = rightW - 2;              // detail/chat content width
-  const titleW = paneInner - 25;              // icon+id+state+retries columns
+  const chatW = chat ? Math.max(30, Math.floor(cols * 0.36)) : 0;
+  const mainW = cols - (chat ? 2 + chatW : 0);       // gutter (2) when chat open
+  const mainInner = mainW - 2;
+  const chatInner = chat ? chatW - 2 : 0;
+  const chatW2 = chat ? chatInner - 2 : 0;
+  const titleW = mainInner - 25;
   const rowBg = (i) => (i === sel ? C.accent : undefined);
 
-  // word-wrap title over up to 2 lines: line1 full titleW, line2 indented to title column
   const wrapTitle = (title, w1, w2) => {
     const words = title.split(/\s+/);
     const l1 = [], l2 = [];
@@ -146,122 +207,139 @@ function App({ port }) {
     const icon = s.running ? "●" : s.state === "done" ? "✓" : s.state === "ready_for_user_review" ? "◆" : "○";
     const label = ((LABEL[s.state] ?? s.state) + (s.running ? "*" : "")).padStart(10);
     const verdict = ` r${s.retries}${s.lastReview ? (s.lastReview.verdict === "PASS" ? "✓" : "✗") : " "}`;
-    const [t1, t2] = wrapTitle(s.title, titleW, titleW);
     const head = ` ${icon} ${s.id} `;
-    const indent = " ".repeat(head.length);
-    const rows = [];
     const mk = (key, body) => h(Text, { key, wrap: false, bold: i === sel,
       color: i === sel ? "#0F1117" : (STATE_COLORS[s.state] ?? C.text), backgroundColor: rowBg(i) }, body);
-    if (!t2) {
-      const spacer = Math.max(2, titleW + 1 - t1.length);
-      rows.push(mk(s.id, `${head}${t1}${" ".repeat(spacer)}${label}${verdict}`));
-    } else {
-      // 2-line row: title split, status block only on line 1
-      const w2 = titleW - head.length;
-      const [a, b] = wrapTitle(s.title, titleW, w2);
-      const spacer = Math.max(2, titleW + 1 - a.length);
-      rows.push(mk(s.id, `${head}${a}${" ".repeat(spacer)}${label}${verdict}`));
-      if (b) rows.push(mk(s.id + ":2", `${indent}${b}`));
-    }
+    const [t1, t2] = wrapTitle(s.title, titleW, titleW - head.length);
+    const spacer = Math.max(2, titleW + 1 - t1.length);
+    const rows = [mk(s.id, `${head}${t1}${" ".repeat(spacer)}${label}${verdict}`)];
+    if (t2) rows.push(mk(s.id + ":2", `${" ".repeat(head.length)}${t2}`));
     return rows;
   };
 
-  const contentW = rightInner - 2; // 1 char left pad + 1 right margin
-  const T = (props, t) => h(Text, { ...props, wrap: false }, ` ${fit(t, contentW)}`);
-  const detail = cur
-    ? [
-        T({ bold: true, color: C.text }, `${cur.id} · ${cur.title}`),
-        T({ color: STATE_COLORS[cur.state] ?? "white" }, `state: ${cur.state}${cur.running ? " (running)" : ""} · retries ${cur.retries}`),
-        T({ color: C.dim }, `branch ${cur.branch} · worktree ${cur.worktree}`),
-        cur.lastReview ? T({ color: cur.lastReview.verdict === "PASS" ? "green" : "red" }, `last review: ${cur.lastReview.verdict} — ${cur.lastReview.file}`) : null,
-        cur.error ? T({ color: "red" }, `⚠ ${cur.error}`) : null,
-        h(Text, { color: "gray", wrap: false }, ""),
-        showLog
-          ? h(Box, { flexDirection: "column" },
-              h(Text, { bold: true, wrap: false }, fit(`── log (last phase: ${cur.log[cur.log.length - 1]?.phase ?? "none"}) ──`, contentW)),
-              h(Text, { wrap: false }, (state.tails[cur.id] || "(no log output)").split("\n").slice(-Math.max(3, logH)).map(l => fit(l, contentW)).join("\n")))
-          : T({ color: C.dim }, `phases: ${cur.log.map(l => l.phase).join(" → ") || "none yet"}`),
-      ].filter(Boolean)
-    : [h(Text, { color: "gray" }, "no stories — synod-lite new \"<title>\"")];
-
-  // ── full-terminal layout ────────────────────────────────
   const rows = stdout?.rows || 30;
   const footerH = 3;                                  // title bar + status + controls
-  const paneH = Math.max(6, rows - footerH);          // pane row incl. borders
-  const listH = paneH - 4;                            // minus borders/header/summary
-  const start = stories.length <= listH ? 0
-    : Math.max(0, Math.min(sel - (listH >> 1), stories.length - listH));
-  const visible = stories.slice(start, start + listH);
-  const logH = paneH - 9;                             // detail chrome + log header
+  const paneH = Math.max(6, rows - footerH);
+  const listH = paneH - 4;
+  const start = filtered.length <= listH ? 0
+    : Math.max(0, Math.min(sel - (listH >> 1), filtered.length - listH));
+  const visible = filtered.slice(start, start + listH);
+
+  const filterInfo = filter.status !== "all" || filter.text
+    ? ` · filter: ${filter.status !== "all" ? filter.status : ""}${filter.text ? ` "${filter.text}"` : ""} (${filtered.length}/${storiesAll.length})` : "";
+
+  // ── detail view: fixed header + scrollable document ──
+  const detailLines = (v) => {
+    const st = storiesAll.find(x => x.id === v.id);
+    if (!st) return ["(story disappeared)"];
+    const doc = v.docs[v.di];
+    if (doc.name === "Details") return [
+      `${st.id} · ${st.title}`,
+      `state      ${st.state}${st.running ? " (running)" : ""}`,
+      `retries    ${st.retries}`,
+      `branch     ${st.branch}`,
+      `worktree   ${st.worktree}`,
+      `created    ${st.createdAt}`,
+      st.lastReview ? `review     ${st.lastReview.verdict} — ${st.lastReview.file}` : "review     (none yet)",
+      st.error ? `error      ${st.error}` : "",
+      "",
+      `phases: ${st.log.map(l => l.phase).join(" → ") || "none yet"}`,
+      "",
+      "── documents ──",
+      ...v.docs.filter(d => d.name !== "Details").map(d => `  ${d.name}: ${d.lines ? d.lines.length + " lines" : "live"}`),
+    ].filter(x => x !== "");
+    if (doc.name === "Log") return [
+      `── log tail (last phase: ${st.log[st.log.length - 1]?.phase ?? "none"}) ──`,
+      ...(state.tails?.[st.id] || "(no log output)").split("\n"),
+    ];
+    return doc.lines ?? [];
+  };
+  // helper for scroll clamping (detailView.lines referenced in useInput)
+  detailView && (detailView.lines = detailLines);
+
+  const hints = composer
+    ? `${composer.kind} ▸ ${composer.buf}▌   ⏎ apply · esc cancel`
+    : chat
+    ? "type message · ⏎ send · esc close chat"
+    : mode === "detail"
+    ? "←→ document · ↑↓ scroll · esc back · c chat · q quit"
+    : `↑↓ move · ⏎ open story · f filter · s status${filterInfo ? " · esc clear" : ""} · n new · a approve · r retry · m merge · K kill · c chat · q quit`;
+
+  const Hint = () => hints.split(/(⏎|esc|←→|↑↓|c |f |s |n |a |r |m |K )/g).filter(Boolean).map((p, i) =>
+    /^[a-zA-Z⏎←↑]|esc/.test(p) && p.length <= 3 ? h(Text, { key: i, color: C.accent }, p) : h(Text, { key: i, color: C.dim }, p));
+
+  const titleRight = `${state.runningIds.length}/${storiesAll.length} stories · port ${port} `;
 
   return h(Box, { flexDirection: "column", height: rows, backgroundColor: C.bg },
     h(Box, { height: 1, backgroundColor: C.panel },
-      (() => {
-        const right = `${state.runningIds.length}/${stories.length} stories · port ${port} `;
-        const pad = Math.max(1, cols - 13 - right.length - 2);
-        return [
-          h(Text, { bold: true, color: C.accent, wrap: false }, ` ◆ synod-lite${" ".repeat(pad)}`),
-          h(Text, { color: C.dim, wrap: false }, right),
-        ];
-      })()),
+      h(Text, { bold: true, color: C.accent, wrap: false }, ` ◆ synod-lite · ${mode === "list" ? "stories" : (detailView?.id ?? "detail")}${" ".repeat(Math.max(1, cols - 13 - (mode === "list" ? 7 : (detailView?.id.length + 2)) - titleRight.length - 2))}`),
+      h(Text, { color: C.dim, wrap: false }, titleRight)),
     h(Box, { flexDirection: "row", height: paneH },
-      h(Box, { borderStyle: "single", borderColor: C.border, backgroundColor: C.panel, flexDirection: "column", width: listW },
-        h(Box, { flexDirection: "row" },
-          h(Text, { bold: true, color: C.text, wrap: false }, " Stories ("),
-          h(Text, { bold: true, color: C.accent, wrap: false }, String(stories.length)),
-          h(Text, { bold: true, color: C.text, wrap: false }, ")")),
-        start > 0 ? h(Text, { color: C.dim, wrap: false }, ` ↑ ${start} more`) : null,
-        ...visible.flatMap(line),
-        (start + listH < stories.length) ? h(Text, { color: C.dim, wrap: false }, ` ↓ ${stories.length - start - listH} more`) : null,
-        h(Box, { flexGrow: 1 }),
-        h(Text, { color: C.dim }, ` ${state.runningIds.length} running · workers ${state.config.workers} · auto ${state.config.auto} · trunk ${state.config.trunk}`)),
-      h(Box, { width: 2 }),
-      h(Box, { borderStyle: "single", borderColor: specView ? C.accent : chat ? C.accent : C.border, backgroundColor: C.panel, flexDirection: "column", width: rightW },
-        specView
-          ? (() => {
-              const specH = paneH - 5;
-              const win = specView.lines.slice(specView.scroll, specView.scroll + specH);
-              const lockLine = specView.locked
-                ? `🔒 spec LOCKED — story ${specView.state} (edits via harness actions only)`
-                : `● spec editable — story not yet in development`;
-              return [
-                h(Text, { bold: true, color: C.accent, wrap: false }, ` Spec · ${specView.id}`),
-                h(Text, { wrap: false, color: specView.locked ? C.red : C.green }, ` ${fit(lockLine, contentW)}`),
-                h(Text, { color: C.dim, wrap: false }, ` ${fit(specView.title, contentW)}`),
-                ...win.map((l, i) => h(Text, { key: i, wrap: false, color: C.text }, ` ${fit(l, contentW)}`)),
-                h(Box, { flexGrow: 1 }),
-                h(Text, { color: C.dim, wrap: false }, ` ${specView.scroll}/${specView.lines.length} · j/k scroll · esc close`),
-              ];
-            })()
-          : chat
-          ? [h(Text, { bold: true, color: C.accent }, ` Chat${chat.busy ? ` ${fit("· thinking…", contentW - 5)}` : ""}`),
-             ...chat.msgs.slice(-(paneH - 4)).map((m, i) =>
-               h(Text, { wrap: false, color: m.role === "you" ? C.accent : m.role === "action" ? C.green : C.text },
-                 ` ${fit(`${m.role === "you" ? "you ▸ " : m.role === "action" ? "⚡ " : "◂ "}${m.text}`, contentW)}`)),
-             h(Box, { flexGrow: 1 })]
-          : [h(Text, { bold: true, color: C.text }, " Detail"), ...detail])),
+      mode === "list"
+        ? h(Box, { borderStyle: "single", borderColor: C.border, backgroundColor: C.panel, flexDirection: "column", width: mainW },
+            h(Box, { flexDirection: "row" },
+              h(Text, { bold: true, color: C.text, wrap: false }, " Stories ("),
+              h(Text, { bold: true, color: C.accent, wrap: false }, String(filtered.length)),
+              h(Text, { bold: true, color: C.text, wrap: false }, ")"),
+              filterInfo ? h(Text, { color: C.yellow, wrap: false }, fit(filterInfo, mainInner - 14)) : null),
+            start > 0 ? h(Text, { color: C.dim, wrap: false }, ` ↑ ${start} more`) : null,
+            ...visible.flatMap(line),
+            (start + listH < filtered.length) ? h(Text, { color: C.dim, wrap: false }, ` ↓ ${filtered.length - start - listH} more`) : null,
+            h(Box, { flexGrow: 1 }),
+            h(Text, { color: C.dim }, ` ${state.runningIds.length} running · workers ${state.config.workers} · auto ${state.config.auto} · trunk ${state.config.trunk}`))
+        : h(Box, { borderStyle: "single", borderColor: C.border, backgroundColor: C.panel, flexDirection: "column", width: mainW },
+            detailView
+              ? (() => {
+                  const st = storiesAll.find(x => x.id === detailView.id);
+                  const docH = paneH - 8;
+                  const all = detailLines(detailView);
+                  const clamped = Math.min(detailView.scroll, Math.max(0, all.length - docH));
+                  const win = all.slice(clamped, clamped + docH);
+                  const doc = detailView.docs[detailView.di];
+                  const lockLine = detailView.locked
+                    ? "🔒 spec LOCKED — past spec stage (edits via harness actions only)"
+                    : "● spec editable — story not yet in development";
+                  return [
+                    // fixed header
+                    h(Box, { flexDirection: "row", key: "hd" },
+                      h(Text, { bold: true, color: C.text, wrap: false }, ` ${detailView.id} · `),
+                      h(Text, { bold: true, wrap: false, color: STATE_COLORS[detailView.state] ?? C.text },
+                        fit(st?.title ?? "", mainInner - detailView.id.length - 3))),
+                    h(Text, { wrap: false, color: STATE_COLORS[detailView.state] ?? C.text, key: "st" },
+                      ` state ${detailView.state} · retries ${st?.retries ?? "?"}${st?.lastReview ? ` · review ${st.lastReview.verdict}` : ""}`),
+                    h(Text, { wrap: false, color: doc.name === "Spec" ? (detailView.locked ? C.red : C.green) : C.border, key: "lk" },
+                      ` ${fit(doc.name === "Spec" ? lockLine : " ".repeat(lockLine.length), mainInner)}`),
+                    // doc tabs
+                    h(Text, { wrap: false, color: C.dim, key: "tabs" },
+                      ` ${detailView.docs.map((d, i) => i === detailView.di ? `[${d.name}]` : ` ${d.name} `).join("│")}`),
+                    // scrollable body
+                    ...win.map((l, i) => h(Text, { key: "b" + i, wrap: false, color: C.text }, ` ${fit(l, mainInner - 1)}`)),
+                    h(Box, { flexGrow: 1 }),
+                    h(Text, { color: C.dim, wrap: false }, ` ${clamped}/${all.length} lines · ${detailView.di + 1}/${detailView.docs.length} docs`),
+                  ];
+                })()
+              : h(Text, { color: C.dim }, " (no story)")),
+      chat
+        ? [h(Box, { width: 2, key: "g" }),
+           h(Box, { borderStyle: "single", borderColor: C.accent, backgroundColor: C.panel, flexDirection: "column", width: chatW, key: "cp" },
+             h(Text, { bold: true, color: C.accent, wrap: false }, ` Chat · focus ${cur?.id ?? "—"}${mode === "detail" ? ` (${detailView?.docs[detailView.di]?.name})` : ""}`),
+             ...chat.msgs.slice(-(paneH - 6)).map((m, i) =>
+               h(Text, { key: i, wrap: false, color: m.role === "you" ? C.accent : m.role === "action" ? C.green : C.text },
+                 ` ${fit(`${m.role === "you" ? "you ▸ " : m.role === "action" ? "⚡ " : "◂ "}${m.text}`, chatW2)}`)),
+             h(Box, { flexGrow: 1 }),
+             chat.busy ? h(Text, { color: C.dim }, " thinking…") : null,
+             h(Text, { color: C.accent, wrap: false }, ` ▸ ${fit(chat.draft ?? "", chatW2 - 3)}▌`))]
+        : null),
     h(Box, { height: 1 },
       composer
-        ? h(Text, { color: C.accent, wrap: false }, ` ${chat ? "chat" : "new story"} ▸ ${composer.buf}▌   ⏎ send · esc cancel`)
+        ? h(Text, { color: C.accent, wrap: false }, ` ${hints}`)
         : h(Text, { color: msg.startsWith("✗") ? C.red : C.green, wrap: false }, ` ${msg}`)),
-    h(Box, { height: 1 },
-      chat
-        ? [h(Text, { color: C.accent, wrap: false }, " n"), h(Text, { color: C.dim, wrap: false }, " message  "),
-           h(Text, { color: C.accent, wrap: false }, "esc"), h(Text, { color: C.dim, wrap: false }, " close chat  "),
-           h(Text, { color: C.accent, wrap: false }, "j/k"), h(Text, { color: C.dim, wrap: false }, " move  "),
-           h(Text, { color: C.accent, wrap: false }, "q"), h(Text, { color: C.dim, wrap: false }, " uit")]
-        : [["n","ew"],["a","pprove"],["r","etry"],["m","erge"],["K","ill"],["l","og"],["c","hat"],["s","pec"],["j/k"," move"],["q","uit"]]
-          .flatMap(([k, rest], i) => [
-            ...(i ? [h(Text, { color: C.border, wrap: false }, " · ")] : []),
-            h(Text, { color: C.accent, wrap: false }, ` ${k}`),
-            h(Text, { color: C.dim, wrap: false }, rest),
-          ]))
+    h(Box, { height: 1 }, composer ? null : h(Hint)),
   );
 }
 
 export async function runUI(repo, port) {
   if (!(await isDaemonUp(port))) {
-    // auto-start daemon in background
     const me = new URL(import.meta.url).pathname;
     const bin = me.replace(/src\/ui\.js$/, "bin/synod-lite.js");
     const child = spawn(process.execPath, [bin, "start", "--fg"], { detached: true, stdio: "ignore", cwd: repo });

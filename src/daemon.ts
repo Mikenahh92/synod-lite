@@ -150,7 +150,17 @@ export async function handleAction(ctx: Ctx, action: string, id?: string, args: 
           const f = fs.readdirSync(dir).filter(n => n.endsWith(".md") && !n.startsWith("test-design")).sort().pop();
           if (f) specEx = fs.readFileSync(path.join(dir, f), "utf8").slice(0, 1200);
         } catch {}
-        focusCtx = "\nThe operator currently has story " + focus.id + " (" + focus.title + ", state " + focus.state + ") in focus.\n"
+        let docCtx = "";
+        const doc = String(args.doc ?? "");
+        if (doc) {
+          try {
+            const d = doc === "Test design" ? ["specs", "test-design"] : doc === "Review" ? ["output", "review-"] : ["specs", ""];
+            const dir = path.join(repo, focus.worktree, ".dev-agents", d[0]);
+            const fname = fs.readdirSync(dir).filter(n => n.endsWith(".md") && n.startsWith(d[1])).sort().pop();
+            if (fname) docCtx = "\nThe operator is viewing the story's " + doc + " document (" + fname + "):\n" + fs.readFileSync(path.join(dir, fname), "utf8").slice(0, 2500) + "\n";
+          } catch {}
+        }
+        focusCtx = docCtx + "\nThe operator currently has story " + focus.id + " (" + focus.title + ", state " + focus.state + ") in focus.\n"
           + (specEx ? "Its spec (excerpt):\n" + specEx + "\n" : "No spec authored yet.\n")
           + (LOCKED.includes(focus.state)
             ? "This story is past the spec stage: the spec is LOCKED. Do not propose spec edits; advise on progress, reviews, retries, or merging instead."
@@ -159,7 +169,7 @@ export async function handleAction(ctx: Ctx, action: string, id?: string, args: 
       const sys = [
         "You are the synod-lite assistant, embedded in a story dashboard the operator is looking at.",
         "Current stories (JSON): " + JSON.stringify(snap),
-        "Help the operator: explain states, summarise progress, advise next steps.",
+        "Help the operator: explain states, summarise progress, advise next steps. When a diagram or graph would help, render it as ASCII art (monospace-safe).",
         focusCtx,
         "You may end your reply with exactly ONE action line: ACTION: <command>",
         "Allowed actions: ACTION: new \"<title>\"  |  ACTION: retry <id>  |  ACTION: kill <id>",
