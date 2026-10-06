@@ -335,12 +335,12 @@ function App({ port }) {
                     (() => {
                       const W = mainInner;
                       const n = detailView.docs.length;
-                      const sum = W - n - 1;                 // 1 leading │ + n-1 separators + 1 trailing ┤
+                      const sum = W - (n - 1);                // only the n-1 separators consume width now                 // 1 leading │ + n-1 separators + 1 trailing ┤
                       const w = [];                          // exact slot widths incl. remainder
                       for (let i = 0; i < n; i++) w.push(Math.floor(sum / n) + (i < sum % n ? 1 : 0));
                       const top = h(Text, { key: "bt", wrap: false, color: C.border },
-                        "├" + w.map(x => "─".repeat(x)).join("┬") + "┤");
-                      const row = [h(Text, { key: "bl", wrap: false, color: C.border }, "│")];
+                        w.map(x => "─".repeat(x)).join("┬"));
+                      const row = [];
                       detailView.docs.forEach((d, i) => {
                         const sel = i === detailView.di;
                         const label = sel ? `[${d.name}]` : d.name;
@@ -348,8 +348,9 @@ function App({ port }) {
                         const lead = Math.floor(pad / 2), trail = pad - lead;
                         row.push(h(Text, { key: "s" + i, wrap: false, bold: sel,
                           color: sel ? C.accent : C.dim }, " ".repeat(lead) + label));
-                        row.push(h(Text, { key: "p" + i, wrap: false, color: C.border },
-                          " ".repeat(trail) + (i < n - 1 ? "│" : "┤")));
+                        if (i < n - 1) row.push(h(Text, { key: "p" + i, wrap: false, color: C.border },
+                          " ".repeat(trail) + "│"));
+                        else row.push(h(Text, { key: "pl", wrap: false, color: C.border }, " ".repeat(trail)));
                       });
                       return [top, h(Box, { flexDirection: "row", key: "bb" }, ...row)];
                     })(),
