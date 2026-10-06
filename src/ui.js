@@ -28,6 +28,17 @@ const LABEL = {
 const STATUS_FILTERS = ["all", "active", "done", "blocked"];
 const trunc = (t, n) => (t.length > n ? t.slice(0, Math.max(0, n - 1)) + "…" : t).padEnd(n);
 const fit = (t, n) => (t.length > n ? t.slice(0, Math.max(0, n - 1)) + "…" : t);
+const softWrap = (t, w) => {
+  if (t.length <= w) return [t];
+  const out = []; let rest = t;
+  while (rest.length > w) {
+    const cut = rest.lastIndexOf(" ", w);
+    if (cut <= 0) { out.push(rest.slice(0, w)); rest = rest.slice(w); } // no space: hard break (ascii art)
+    else { out.push(rest.slice(0, cut)); rest = rest.slice(cut + 1); }
+  }
+  out.push(rest);
+  return out;
+};
 
 function fetchState(port) {
   return fetch(`http://127.0.0.1:${port}/state`).then(r => r.json());
@@ -292,12 +303,12 @@ function App({ port }) {
               ? (() => {
                   const st = storiesAll.find(x => x.id === detailView.id);
                   const docH = paneH - 8;
-                  const all = detailLines(detailView);
+                  const all = detailLines(detailView).flatMap(l => softWrap(l, mainInner - 2));
                   const clamped = Math.min(detailView.scroll, Math.max(0, all.length - docH));
                   const win = all.slice(clamped, clamped + docH);
                   const doc = detailView.docs[detailView.di];
                   const lockLine = detailView.locked
-                    ? "🔒 spec LOCKED — past spec stage (edits via harness actions only)"
+                    ? "× spec LOCKED — past spec stage (edits via harness actions only)"
                     : "● spec editable — story not yet in development";
                   return [
                     // fixed header
@@ -311,9 +322,9 @@ function App({ port }) {
                       ` ${fit(doc.name === "Spec" ? lockLine : " ".repeat(lockLine.length), mainInner)}`),
                     // doc tabs
                     h(Text, { wrap: false, color: C.dim, key: "tabs" },
-                      ` ${detailView.docs.map((d, i) => i === detailView.di ? `[${d.name}]` : ` ${d.name} `).join("│")}`),
-                    // scrollable body
-                    ...win.map((l, i) => h(Text, { key: "b" + i, wrap: false, color: C.text }, ` ${fit(l, mainInner - 1)}`)),
+                      ` ${fit(detailView.docs.map((d, i) => i === detailView.di ? `[${d.name}]` : ` ${d.name} `).join("│"), mainInner - 2)}`),
+                    // scrollable body — soft-wrapped, never wider than the pane
+                    ...win.map((l, i) => h(Text, { key: "b" + i, wrap: false, color: C.text }, ` ${l}`)),
                     h(Box, { flexGrow: 1 }),
                     h(Text, { color: C.dim, wrap: false }, ` ${clamped}/${all.length} lines · ${detailView.di + 1}/${detailView.docs.length} docs`),
                   ];
@@ -325,15 +336,15 @@ function App({ port }) {
              h(Text, { bold: true, color: C.accent, wrap: false }, ` Chat · focus ${cur?.id ?? "—"}${mode === "detail" ? ` (${detailView?.docs[detailView.di]?.name})` : ""}`),
              ...chat.msgs.slice(-(paneH - 6)).map((m, i) =>
                h(Text, { key: i, wrap: false, color: m.role === "you" ? C.accent : m.role === "action" ? C.green : C.text },
-                 ` ${fit(`${m.role === "you" ? "you ▸ " : m.role === "action" ? "⚡ " : "◂ "}${m.text}`, chatW2)}`)),
+                 ` ${fit(`${m.role === "you" ? "you ▸ " : m.role === "action" ? "+ " : "◂ "}${m.text}`, chatW2)}`)),
              h(Box, { flexGrow: 1 }),
-             chat.busy ? h(Text, { color: C.dim }, " thinking…") : null,
+             chat.busy ? h(Text, { color: C.dim }, " thinking...") : null,
              h(Text, { color: C.accent, wrap: false }, ` ▸ ${fit(chat.draft ?? "", chatW2 - 3)}▌`))]
         : null),
     h(Box, { height: 1 },
       composer
         ? h(Text, { color: C.accent, wrap: false }, ` ${hints}`)
-        : h(Text, { color: msg.startsWith("✗") ? C.red : C.green, wrap: false }, ` ${msg}`)),
+        : h(Text, { color: msg.startsWith("✗") ? C.red : C.green, wrap: false }, ` ${fit(msg, cols - 2)}`)),
     h(Box, { height: 1 }, composer ? null : h(Hint)),
   );
 }
