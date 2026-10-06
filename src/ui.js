@@ -31,6 +31,7 @@ function App({ port }) {
   const [sel, setSel] = useState(0);
   const [msg, setMsg] = useState("");
   const [showLog, setShowLog] = useState(false);
+  const [composer, setComposer] = useState(null); // { buf } while typing a new story title
 
   useEffect(() => {
     const iv = setInterval(() => fetchState(port).then(setState).catch(() => {}), 1000);
@@ -50,19 +51,27 @@ function App({ port }) {
     } catch (e) { setMsg(`✗ ${e.message}`); setTimeout(() => setMsg(""), 4000); }
   }, [cur, port]);
 
-  useInput((input, key) => {
+  useInput((ch, key) => {
+    // ── new-story composer (input mode) ───────────────────
+    if (composer) {
+      if (key.escape) { setComposer(null); return; }
+      if (key.return) {
+        const title = composer.buf.trim();
+        setComposer(null);
+        if (title) act("new", { title }); else setMsg("(empty title — cancelled)");
+        return;
+      }
+      if (key.backspace || key.delete) { setComposer({ buf: composer.buf.slice(0, -1) }); return; }
+      if (ch && ch.length === 1 && !key.ctrl && !key.meta) { setComposer({ buf: (composer.buf + ch).slice(0, 80) }); return; }
+      return;
+    }
     if (key.return && showLog) { setShowLog(false); return; }
     if (showLog) return;
-    switch (input) {
+    switch (ch) {
       case "q": exit(); break;
       case "j": case key.downArrow: setSel(s => Math.min(s + 1, stories.length - 1)); break;
       case "k": case key.upArrow: setSel(s => Math.max(s - 1, 0)); break;
-      case "n": {
-        // new story: quick prompt via external editor is out of scope v0.1 — read title from stdin fallback
-        setMsg("new story: use CLI — synod-lite new \"<title>\"");
-        setTimeout(() => setMsg(""), 3500);
-        break;
-      }
+      case "n": setComposer({ buf: "" }); break;
       case "a": act("approve"); break;
       case "r": act("retry"); break;
       case "m": act("merge"); break;
@@ -118,7 +127,12 @@ function App({ port }) {
     h(Box, null,
       h(Text, { color: msg.startsWith("✗") ? "red" : "green" }, ` ${msg}`)),
     h(Box, null,
-      h(Text, { dim: true }, " [a]pprove  [r]etry  [m]erge  [K]ill  [l]og  [j/k] move  [q]uit"))
+      composer
+        ? h(Text, { color: "cyan", wrap: false }, ` new story ▸ ${composer.buf}▌  `)
+        : h(Text, { dim: true }, " [n]ew  [a]pprove  [r]etry  [m]erge  [K]ill  [l]og  [j/k] move  [q]uit")),
+    composer
+      ? h(Box, null, h(Text, { dim: true, wrap: false }, " Enter create · Esc cancel"))
+      : null,
   );
 }
 
