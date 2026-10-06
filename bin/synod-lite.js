@@ -60,7 +60,7 @@ async function main() {
 
   const action = async (name, id, args = {}) =>
     withDaemonOrDirect(cfg, {
-      daemon: () => callDaemon(name, id, args),
+      daemon: () => callDaemon(cfg.daemonPort, name, id, args),
       direct: () => handleAction({ repo, cfg, store }, name, id, args),
     });
 
