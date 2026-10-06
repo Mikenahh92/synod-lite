@@ -109,16 +109,18 @@ function App({ port }) {
   const titleW = paneInner - 24;              // icon+id+state+retries gutter
   const rowBg = (i) => (i === sel ? C.accent : undefined);
 
-  const line = (s, i) =>
-    h(Box, { key: s.id },
-      h(Text, { wrap: false, color: i === sel ? "#0F1117" : (STATE_COLORS[s.state] ?? C.text), backgroundColor: rowBg(i) },
-        ` ${s.running ? "●" : s.state === "done" ? "✓" : s.state === "ready_for_user_review" ? "◆" : "○"} ${s.id} ${trunc(s.title, titleW)}`),
-      h(Text, { wrap: false, color: i === sel ? "#0F1117" : (STATE_COLORS[s.state] ?? C.text), backgroundColor: rowBg(i) },
-        `${((LABEL[s.state] ?? s.state) + (s.running ? "*" : "")).padStart(10)}`),
-      h(Text, { wrap: false, color: i === sel ? "#0F1117" : C.dim, backgroundColor: rowBg(i) },
-        ` r${s.retries}${s.lastReview ? (s.lastReview.verdict === "PASS" ? "✓" : "✗") : " "}`));
+  const line = (s, i) => {
+    const icon = s.running ? "●" : s.state === "done" ? "✓" : s.state === "ready_for_user_review" ? "◆" : "○";
+    const label = ((LABEL[s.state] ?? s.state) + (s.running ? "*" : "")).padStart(10);
+    const spacer = Math.max(1, titleW + 1 - trunc(s.title, titleW).length - 0); // keep ≥1 gap inside one node
+    const row = ` ${icon} ${s.id} ${s.title.slice(0, titleW)}${" ".repeat(spacer)}${label} r${s.retries}${s.lastReview ? (s.lastReview.verdict === "PASS" ? "✓" : "✗") : " "}`;
+    return h(Text, { key: s.id, wrap: false, bold: i === sel,
+      color: i === sel ? "#0F1117" : (STATE_COLORS[s.state] ?? C.text), backgroundColor: rowBg(i) },
+      row.length > paneInner ? row.slice(0, paneInner - 1) + "…" : row);
+  };
 
-  const T = (props, t) => h(Text, { ...props, wrap: false }, fit(t, paneInner));
+  const contentW = paneInner - 2; // 1 char left pad + 1 right margin
+  const T = (props, t) => h(Text, { ...props, wrap: false }, ` ${fit(t, contentW)}`);
   const detail = cur
     ? [
         T({ bold: true, color: C.text }, `${cur.id} · ${cur.title}`),
@@ -157,18 +159,21 @@ function App({ port }) {
       })()),
     h(Box, { flexDirection: "row", height: paneH },
       h(Box, { borderStyle: "single", borderColor: C.border, backgroundColor: C.panel, flexDirection: "column", width: "50%" },
-        h(Text, { bold: true, color: C.text }, ` Stories (${stories.length})`),
+        h(Box, { flexDirection: "row" },
+          h(Text, { bold: true, color: C.text, wrap: false }, " Stories ("),
+          h(Text, { bold: true, color: C.accent, wrap: false }, String(stories.length)),
+          h(Text, { bold: true, color: C.text, wrap: false }, ")")),
         start > 0 ? h(Text, { color: C.dim, wrap: false }, ` ↑ ${start} more`) : null,
         ...visible.map(line),
         (start + listH < stories.length) ? h(Text, { color: C.dim, wrap: false }, ` ↓ ${stories.length - start - listH} more`) : null,
         h(Box, { flexGrow: 1 }),
         h(Text, { color: C.dim }, ` ${state.runningIds.length} running · workers ${state.config.workers} · auto ${state.config.auto} · trunk ${state.config.trunk}`)),
-      h(Box, { borderStyle: "single", borderColor: C.border, backgroundColor: C.panel, flexDirection: "column", width: "50%" },
+      h(Box, { borderStyle: "single", borderColor: chat ? C.accent : C.border, backgroundColor: C.panel, flexDirection: "column", width: "50%" },
         chat
-          ? [h(Text, { bold: true, color: C.accent }, ` Chat${chat.busy ? " · thinking…" : ""}`),
+          ? [h(Text, { bold: true, color: C.accent }, ` Chat${chat.busy ? ` ${fit("· thinking…", contentW - 5)}` : ""}`),
              ...chat.msgs.slice(-(paneH - 4)).map((m, i) =>
                h(Text, { wrap: false, color: m.role === "you" ? C.accent : m.role === "action" ? C.green : C.text },
-                 fit(`${m.role === "you" ? "you ▸ " : m.role === "action" ? "⚡ " : "◂ "}${m.text}`, paneInner))),
+                 ` ${fit(`${m.role === "you" ? "you ▸ " : m.role === "action" ? "⚡ " : "◂ "}${m.text}`, contentW)}`)),
              h(Box, { flexGrow: 1 })]
           : [h(Text, { bold: true, color: C.text }, " Detail"), ...detail])),
     h(Box, { height: 1 },
@@ -176,9 +181,17 @@ function App({ port }) {
         ? h(Text, { color: C.accent, wrap: false }, ` ${chat ? "chat" : "new story"} ▸ ${composer.buf}▌   ⏎ send · esc cancel`)
         : h(Text, { color: msg.startsWith("✗") ? C.red : C.green, wrap: false }, ` ${msg}`)),
     h(Box, { height: 1 },
-      h(Text, { color: C.dim, wrap: false }, chat
-        ? " [n] message · esc close chat · [j/k] move · [q]uit"
-        : " [n]ew  [a]pprove  [r]etry  [m]erge  [K]ill  [l]og  [c]hat  [j/k] move  [q]uit")),
+      chat
+        ? [h(Text, { color: C.accent, wrap: false }, " n"), h(Text, { color: C.dim, wrap: false }, " message  "),
+           h(Text, { color: C.accent, wrap: false }, "esc"), h(Text, { color: C.dim, wrap: false }, " close chat  "),
+           h(Text, { color: C.accent, wrap: false }, "j/k"), h(Text, { color: C.dim, wrap: false }, " move  "),
+           h(Text, { color: C.accent, wrap: false }, "q"), h(Text, { color: C.dim, wrap: false }, " uit")]
+        : [["n","ew"],["a","pprove"],["r","etry"],["m","erge"],["K","ill"],["l","og"],["c","hat"],["j/k"," move"],["q","uit"]]
+          .flatMap(([k, rest], i) => [
+            ...(i ? [h(Text, { color: C.border, wrap: false }, " · ")] : []),
+            h(Text, { color: C.accent, wrap: false }, ` ${k}`),
+            h(Text, { color: C.dim, wrap: false }, rest),
+          ]))
   );
 }
 
