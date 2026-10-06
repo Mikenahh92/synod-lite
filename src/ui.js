@@ -105,7 +105,8 @@ function App({ port }) {
 
   // deterministic column math — rows can never overflow their pane
   const cols = stdout?.columns || 110;
-  const paneInner = Math.floor(cols / 2) - 2; // border chars
+  const paneW = Math.floor((cols - 2) / 2);   // 2-col gutter between panes
+  const paneInner = paneW - 2; // border chars
   const titleW = paneInner - 24;              // icon+id+state+retries gutter
   const rowBg = (i) => (i === sel ? C.accent : undefined);
 
@@ -158,7 +159,7 @@ function App({ port }) {
         ];
       })()),
     h(Box, { flexDirection: "row", height: paneH },
-      h(Box, { borderStyle: "single", borderColor: C.border, backgroundColor: C.panel, flexDirection: "column", width: "50%" },
+      h(Box, { borderStyle: "single", borderColor: C.border, backgroundColor: C.panel, flexDirection: "column", width: paneW },
         h(Box, { flexDirection: "row" },
           h(Text, { bold: true, color: C.text, wrap: false }, " Stories ("),
           h(Text, { bold: true, color: C.accent, wrap: false }, String(stories.length)),
@@ -168,7 +169,8 @@ function App({ port }) {
         (start + listH < stories.length) ? h(Text, { color: C.dim, wrap: false }, ` ↓ ${stories.length - start - listH} more`) : null,
         h(Box, { flexGrow: 1 }),
         h(Text, { color: C.dim }, ` ${state.runningIds.length} running · workers ${state.config.workers} · auto ${state.config.auto} · trunk ${state.config.trunk}`)),
-      h(Box, { borderStyle: "single", borderColor: chat ? C.accent : C.border, backgroundColor: C.panel, flexDirection: "column", width: "50%" },
+      h(Box, { width: 2 }),
+      h(Box, { borderStyle: "single", borderColor: chat ? C.accent : C.border, backgroundColor: C.panel, flexDirection: "column", width: paneW },
         chat
           ? [h(Text, { bold: true, color: C.accent }, ` Chat${chat.busy ? ` ${fit("· thinking…", contentW - 5)}` : ""}`),
              ...chat.msgs.slice(-(paneH - 4)).map((m, i) =>
