@@ -105,22 +105,24 @@ function App({ port }) {
 
   // deterministic column math — rows can never overflow their pane
   const cols = stdout?.columns || 110;
-  const paneW = Math.floor((cols - 2) / 2);   // 2-col gutter between panes
-  const paneInner = paneW - 2; // border chars
-  const titleW = paneInner - 24;              // icon+id+state+retries gutter
+  const listW = Math.floor((cols - 2) * 0.6);  // story list gets the wide share
+  const rightW = cols - 2 - listW;            // detail/chat pane
+  const paneInner = listW - 2;                // border chars (row math)
+  const rightInner = rightW - 2;              // detail/chat content width
+  const titleW = paneInner - 25;              // icon+id+state+retries columns
   const rowBg = (i) => (i === sel ? C.accent : undefined);
 
   const line = (s, i) => {
     const icon = s.running ? "●" : s.state === "done" ? "✓" : s.state === "ready_for_user_review" ? "◆" : "○";
     const label = ((LABEL[s.state] ?? s.state) + (s.running ? "*" : "")).padStart(10);
-    const spacer = Math.max(1, titleW + 1 - trunc(s.title, titleW).length - 0); // keep ≥1 gap inside one node
+    const spacer = Math.max(2, titleW + 1 - s.title.slice(0, titleW).length); // clear column boundary (≥2 gap)
     const row = ` ${icon} ${s.id} ${s.title.slice(0, titleW)}${" ".repeat(spacer)}${label} r${s.retries}${s.lastReview ? (s.lastReview.verdict === "PASS" ? "✓" : "✗") : " "}`;
     return h(Text, { key: s.id, wrap: false, bold: i === sel,
       color: i === sel ? "#0F1117" : (STATE_COLORS[s.state] ?? C.text), backgroundColor: rowBg(i) },
       row.length > paneInner ? row.slice(0, paneInner - 1) + "…" : row);
   };
 
-  const contentW = paneInner - 2; // 1 char left pad + 1 right margin
+  const contentW = rightInner - 2; // 1 char left pad + 1 right margin
   const T = (props, t) => h(Text, { ...props, wrap: false }, ` ${fit(t, contentW)}`);
   const detail = cur
     ? [
@@ -132,8 +134,8 @@ function App({ port }) {
         h(Text, { color: "gray", wrap: false }, ""),
         showLog
           ? h(Box, { flexDirection: "column" },
-              h(Text, { bold: true, wrap: false }, fit(`── log (last phase: ${cur.log[cur.log.length - 1]?.phase ?? "none"}) ──`, paneInner)),
-              h(Text, { wrap: false }, (state.tails[cur.id] || "(no log output)").split("\n").slice(-Math.max(3, logH)).map(l => fit(l, paneInner)).join("\n")))
+              h(Text, { bold: true, wrap: false }, fit(`── log (last phase: ${cur.log[cur.log.length - 1]?.phase ?? "none"}) ──`, contentW)),
+              h(Text, { wrap: false }, (state.tails[cur.id] || "(no log output)").split("\n").slice(-Math.max(3, logH)).map(l => fit(l, contentW)).join("\n")))
           : T({ color: C.dim }, `phases: ${cur.log.map(l => l.phase).join(" → ") || "none yet"}`),
       ].filter(Boolean)
     : [h(Text, { color: "gray" }, "no stories — synod-lite new \"<title>\"")];
@@ -159,7 +161,7 @@ function App({ port }) {
         ];
       })()),
     h(Box, { flexDirection: "row", height: paneH },
-      h(Box, { borderStyle: "single", borderColor: C.border, backgroundColor: C.panel, flexDirection: "column", width: paneW },
+      h(Box, { borderStyle: "single", borderColor: C.border, backgroundColor: C.panel, flexDirection: "column", width: listW },
         h(Box, { flexDirection: "row" },
           h(Text, { bold: true, color: C.text, wrap: false }, " Stories ("),
           h(Text, { bold: true, color: C.accent, wrap: false }, String(stories.length)),
@@ -170,7 +172,7 @@ function App({ port }) {
         h(Box, { flexGrow: 1 }),
         h(Text, { color: C.dim }, ` ${state.runningIds.length} running · workers ${state.config.workers} · auto ${state.config.auto} · trunk ${state.config.trunk}`)),
       h(Box, { width: 2 }),
-      h(Box, { borderStyle: "single", borderColor: chat ? C.accent : C.border, backgroundColor: C.panel, flexDirection: "column", width: paneW },
+      h(Box, { borderStyle: "single", borderColor: chat ? C.accent : C.border, backgroundColor: C.panel, flexDirection: "column", width: rightW },
         chat
           ? [h(Text, { bold: true, color: C.accent }, ` Chat${chat.busy ? ` ${fit("· thinking…", contentW - 5)}` : ""}`),
              ...chat.msgs.slice(-(paneH - 4)).map((m, i) =>
