@@ -76,6 +76,47 @@ TUI keys: `j/k` select · `a` approve · `r` retry · `m` merge · `K` kill · `
 
 State lives in `.synod-lite/state.json`; phase logs in `.synod-lite/logs/<story>/`.
 
+## Story lifecycle
+
+```mermaid
+flowchart TD
+    NEW["n 'title' — you create the story"] --> DRAFTED
+
+    DRAFTED["DRAFTED<br/>branch story/s-N + git worktree"] -->|"daemon picks it up"| SPEC["AGENT · SPEC workflow<br/>writes .dev-agents/specs/*.md"]
+
+    SPEC -->|"spec file + gate PASS"| RUR["READY_FOR_USER_REVIEW<br/>◆ AWAITING"]
+    SPEC -.->|"exit ≠ 0"| FAILED["FAILED"]
+
+    RUR -->|"press a — HUMAN GATE 1<br/>you read the spec"| DEV["IN_DEVELOPMENT"]
+
+    DEV -->|"agent"| IMPL["AGENT · TEST-DESIGN + IMPLEMENT<br/>commits to story branch"]
+    IMPL -->|"exit 0"| REV["IN_REVIEW"]
+    IMPL -.->|"exit ≠ 0"| FAILED
+
+    REV -->|"agent"| RW["AGENT · REVIEW workflow<br/>spec vs code, verdict"]
+
+    RW -->|"verdict PASS"| RFM["READY_FOR_MERGE"]
+    RW -->|"FAIL · retries < 3"| LOOP["back to IN_DEVELOPMENT<br/>review feedback injected"]
+    LOOP --> IMPL
+    RW -.->|"FAIL × 3"| BLOCKED["BLOCKED"]
+
+    RFM -->|"press m — HUMAN GATE 2"| MERGE["MERGING<br/>squash onto trunk"]
+    MERGE --> DONE["DONE"]
+
+    FAILED -->|"press r"| SPEC
+    BLOCKED -->|"press r"| RUR
+    FAILED -.->|"press K"| CANC["CANCELLED<br/>worktree removed"]
+    BLOCKED -.->|"press K"| CANC
+
+    style RUR fill:#3b4252,stroke:#88c0d0
+    style RFM fill:#3b4252,stroke:#88c0d0
+    style DONE fill:#2e3830,stroke:#a3be8c
+    style FAILED fill:#3b2e2e,stroke:#bf616a
+    style BLOCKED fill:#3b2e2e,stroke:#bf616a
+```
+
+Solid arrows = automatic (daemon + agents). Dashed = failure exits. The two highlighted states are the only ones that wait for you (`a` / `m`).
+
 ## Story states
 
 `drafted → refining → ready_for_user_review → in_development → in_review → ready_for_merge → done`
