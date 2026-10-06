@@ -7,9 +7,17 @@ OUT=".dev-agents"
 MODE="${FAKE_PI_MODE:-pass}"
 
 mkdir -p "$OUT/specs" "$OUT/output"
-echo "[fake-pi] mode=$MODE prompt=${PROMPT:0:80}"
+if [[ "$PROMPT" != *"synod-lite assistant"* ]]; then
+  echo "[fake-pi] mode=$MODE prompt=${PROMPT:0:80}"
+fi
 
-if [[ "$PROMPT" == *"spec workflow"* ]]; then
+if [[ "$PROMPT" == *"synod-lite assistant"* ]]; then
+  echo "Assistant (fake): S-005 is blocked because its review failed 3 times in a row."
+  echo "You could press r to retry it, or K to cancel and re-spec it."
+  if [[ "$PROMPT" == *"create"* ]]; then
+    echo 'ACTION: new "Chat-created story"'
+  fi
+elif [[ "$PROMPT" == *"spec workflow"* ]]; then
   echo "# Spec (fake)" > "$OUT/specs/fake-feature.md"
   echo "## Gate decision — PASS" >> "$OUT/specs/fake-feature.md"
 elif [[ "$PROMPT" == *"test-design workflow"* ]]; then

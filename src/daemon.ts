@@ -110,6 +110,42 @@ export async function handleAction(ctx: Ctx, action: string, id?: string, args: 
       await store.add(story);
       return story;
     }
+    case "chat": {
+      // agent chat: pi session with story-state context; may execute non-gate actions
+      const message = String(args.message ?? "").slice(0, 2000);
+      if (!message.trim()) throw new Error("message required");
+      const { runPi } = await import("./core/runner.ts");
+      const snap = store.stories().map(({ id, title, state, retries }) => ({ id, title, state, retries }));
+      const sys = [
+        "You are the synod-lite assistant, embedded in a story dashboard the operator is looking at.",
+        "Current stories (JSON): " + JSON.stringify(snap),
+        "Help the operator: explain states, summarise progress, advise next steps.",
+        "You may end your reply with exactly ONE action line: ACTION: <command>",
+        "Allowed actions: ACTION: new \"<title>\"  |  ACTION: retry <id>  |  ACTION: kill <id>",
+        "approve and merge are human gates — NEVER issue them; tell the operator to press a/m instead.",
+        "Keep replies short (terminal column width). No markdown fences.",
+      ].join("\n");
+      const log = store.logFile("chat", "chat", 0);
+      const r = await runPi(cfg, repo, sys + "\n\nOperator: " + message, log);
+      let raw = "";
+      try { raw = fs.readFileSync(log, "utf8"); } catch { /* empty */ }
+      const m = raw.match(/^ACTION:\s*(.+)$/m);
+      let action: string | null = null, actionResult: string | null = null;
+      if (m && r.code === 0) {
+        action = m[1].trim();
+        let ok = false;
+        let newM; let retryK;
+        if ((newM = action.match(/^new\s+"(.+)"$/))) {
+          try { actionResult = (await handleAction(ctx, "new", undefined, { title: newM[1] })).message ?? "story created"; ok = true; }
+          catch (e: any) { actionResult = "✗ " + e.message; }
+        } else if ((retryK = action.match(/^(retry|kill)\s+(\S+)$/))) {
+          try { await handleAction(ctx, retryK[1], retryK[2], {}); actionResult = `${retryK[1]} ${retryK[2]} ✓`; ok = true; }
+          catch (e: any) { actionResult = "✗ " + e.message; }
+        } else { actionResult = "✗ unsupported action (human gates: approve/merge are yours)"; }
+        raw = raw.replace(m[0], "").trimEnd();
+      }
+      return { reply: raw.split("\n").filter(Boolean).slice(-30).join("\n") || "(no reply)", action, actionResult };
+    }
     case "approve": {
       const s = mustGet(store, id!);
       if (s.state !== "ready_for_user_review") throw new Error(`${s.id} is '${s.state}', expected ready_for_user_review`);

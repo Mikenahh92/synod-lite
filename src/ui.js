@@ -5,10 +5,16 @@ import { spawn } from "node:child_process";
 import { callDaemon, isDaemonUp } from "./daemon.ts";
 
 const h = React.createElement;
+// Synod brand palette (synod-shared/branding/brand-guide.md)
+const C = {
+  bg: "#0F1117", panel: "#151A23", border: "#242B3A",
+  text: "#E6EAF2", dim: "#A3AAB8", accent: "#36D6D6",
+  green: "#7EC699", yellow: "#E5C07B", red: "#E06C75", magenta: "#C678DD", blue: "#7AA2F7",
+};
 const STATE_COLORS = {
-  refining: "yellow", in_development: "cyan", in_review: "magenta",
-  merging: "blue", ready_for_merge: "green", done: "green",
-  ready_for_user_review: "yellowBright", blocked: "red", failed: "red", cancelled: "gray",
+  refining: C.yellow, in_development: C.accent, in_review: C.magenta,
+  merging: C.blue, ready_for_merge: C.green, done: C.green,
+  ready_for_user_review: C.yellow, blocked: C.red, failed: C.red, cancelled: C.dim,
 };
 // compact, fixed-width display labels (max 10 chars) — layout stays deterministic
 const LABEL = {
@@ -31,7 +37,8 @@ function App({ port }) {
   const [sel, setSel] = useState(0);
   const [msg, setMsg] = useState("");
   const [showLog, setShowLog] = useState(false);
-  const [composer, setComposer] = useState(null); // { buf } while typing a new story title
+  const [composer, setComposer] = useState(null); // { buf } while typing (new story or chat)
+  const [chat, setChat] = useState(null);          // { msgs: [{role, text}] } when chat column open
 
   useEffect(() => {
     const iv = setInterval(() => fetchState(port).then(setState).catch(() => {}), 1000);
@@ -51,20 +58,33 @@ function App({ port }) {
     } catch (e) { setMsg(`✗ ${e.message}`); setTimeout(() => setMsg(""), 4000); }
   }, [cur, port]);
 
+  const sendChat = useCallback(async (text) => {
+    setChat(c => ({ ...(c ?? { msgs: [] }), msgs: [...(c?.msgs ?? []), { role: "you", text }], busy: true }));
+    try {
+      const r = await callDaemon(port, "chat", undefined, { message: text });
+      setChat(c => ({ msgs: [...c.msgs, { role: "agent", text: r.reply },
+        ...(r.action ? [{ role: "action", text: `${r.action} → ${r.actionResult}` }] : [])], busy: false }));
+    } catch (e) {
+      setChat(c => ({ msgs: [...c.msgs, { role: "agent", text: `✗ ${e.message}` }], busy: false }));
+    }
+  }, [port]);
+
   useInput((ch, key) => {
-    // ── new-story composer (input mode) ───────────────────
+    // ── composer (new story / chat message) ────────────────
     if (composer) {
       if (key.escape) { setComposer(null); return; }
       if (key.return) {
-        const title = composer.buf.trim();
+        const text = composer.buf.trim();
         setComposer(null);
-        if (title) act("new", { title }); else setMsg("(empty title — cancelled)");
+        if (!text) { setMsg("(empty — cancelled)"); return; }
+        if (chat) sendChat(text); else act("new", { title: text });
         return;
       }
       if (key.backspace || key.delete) { setComposer({ buf: composer.buf.slice(0, -1) }); return; }
       if (ch && ch.length === 1 && !key.ctrl && !key.meta) { setComposer({ buf: (composer.buf + ch).slice(0, 80) }); return; }
       return;
     }
+    if (key.escape && chat) { setChat(null); return; }
     if (key.return && showLog) { setShowLog(false); return; }
     if (showLog) return;
     switch (ch) {
@@ -72,6 +92,7 @@ function App({ port }) {
       case "j": case key.downArrow: setSel(s => Math.min(s + 1, stories.length - 1)); break;
       case "k": case key.upArrow: setSel(s => Math.max(s - 1, 0)); break;
       case "n": setComposer({ buf: "" }); break;
+      case "c": setChat(chat ? null : { msgs: [] }); break;
       case "a": act("approve"); break;
       case "r": act("retry"); break;
       case "m": act("merge"); break;
@@ -80,59 +101,84 @@ function App({ port }) {
     }
   });
 
-  if (!state) return h(Text, { color: "gray" }, `connecting to synod-lite daemon on 127.0.0.1:${port}… (run: synod-lite start)`);
+  if (!state) return h(Text, { color: C.dim }, `connecting to synod-lite daemon on 127.0.0.1:${port}… (run: synod-lite start)`);
 
   // deterministic column math — rows can never overflow their pane
   const cols = stdout?.columns || 110;
   const paneInner = Math.floor(cols / 2) - 2; // border chars
   const titleW = paneInner - 24;              // icon+id+state+retries gutter
-  const rowBg = (i) => (i === sel ? "cyan" : undefined);
+  const rowBg = (i) => (i === sel ? C.accent : undefined);
 
   const line = (s, i) =>
     h(Box, { key: s.id },
-      h(Text, { wrap: false, color: i === sel ? "black" : (STATE_COLORS[s.state] ?? "white"), backgroundColor: rowBg(i) },
+      h(Text, { wrap: false, color: i === sel ? "#0F1117" : (STATE_COLORS[s.state] ?? C.text), backgroundColor: rowBg(i) },
         ` ${s.running ? "●" : s.state === "done" ? "✓" : s.state === "ready_for_user_review" ? "◆" : "○"} ${s.id} ${trunc(s.title, titleW)}`),
-      h(Text, { wrap: false, color: i === sel ? "black" : (STATE_COLORS[s.state] ?? "white"), backgroundColor: rowBg(i) },
+      h(Text, { wrap: false, color: i === sel ? "#0F1117" : (STATE_COLORS[s.state] ?? C.text), backgroundColor: rowBg(i) },
         `${((LABEL[s.state] ?? s.state) + (s.running ? "*" : "")).padStart(10)}`),
-      h(Text, { wrap: false, color: i === sel ? "black" : "gray", backgroundColor: rowBg(i) },
+      h(Text, { wrap: false, color: i === sel ? "#0F1117" : C.dim, backgroundColor: rowBg(i) },
         ` r${s.retries}${s.lastReview ? (s.lastReview.verdict === "PASS" ? "✓" : "✗") : " "}`));
 
   const T = (props, t) => h(Text, { ...props, wrap: false }, fit(t, paneInner));
   const detail = cur
     ? [
-        T({ bold: true }, `${cur.id} · ${cur.title}`),
+        T({ bold: true, color: C.text }, `${cur.id} · ${cur.title}`),
         T({ color: STATE_COLORS[cur.state] ?? "white" }, `state: ${cur.state}${cur.running ? " (running)" : ""} · retries ${cur.retries}`),
-        T({ color: "gray" }, `branch ${cur.branch} · worktree ${cur.worktree}`),
+        T({ color: C.dim }, `branch ${cur.branch} · worktree ${cur.worktree}`),
         cur.lastReview ? T({ color: cur.lastReview.verdict === "PASS" ? "green" : "red" }, `last review: ${cur.lastReview.verdict} — ${cur.lastReview.file}`) : null,
         cur.error ? T({ color: "red" }, `⚠ ${cur.error}`) : null,
         h(Text, { color: "gray", wrap: false }, ""),
         showLog
           ? h(Box, { flexDirection: "column" },
               h(Text, { bold: true, wrap: false }, fit(`── log (last phase: ${cur.log[cur.log.length - 1]?.phase ?? "none"}) ──`, paneInner)),
-              h(Text, { wrap: false }, (state.tails[cur.id] || "(no log output)").split("\n").slice(-18).map(l => fit(l, paneInner)).join("\n")))
-          : T({ color: "gray" }, `phases: ${cur.log.map(l => l.phase).join(" → ") || "none yet"}`),
+              h(Text, { wrap: false }, (state.tails[cur.id] || "(no log output)").split("\n").slice(-Math.max(3, logH)).map(l => fit(l, paneInner)).join("\n")))
+          : T({ color: C.dim }, `phases: ${cur.log.map(l => l.phase).join(" → ") || "none yet"}`),
       ].filter(Boolean)
     : [h(Text, { color: "gray" }, "no stories — synod-lite new \"<title>\"")];
 
-  return h(Box, { flexDirection: "column", height: "100%" },
-    h(Box, { flexDirection: "row" },
-      h(Box, { borderStyle: "single", flexDirection: "column", width: "50%" },
-        h(Text, { bold: true }, ` Stories (${stories.length})`),
-        ...stories.map(line),
-        h(Text, { color: "gray" }, ""),
-        h(Text, { color: "gray" }, ` ${state.runningIds.length} running · workers ${state.config.workers} · auto ${state.config.auto} · trunk ${state.config.trunk}`)),
-      h(Box, { borderStyle: "single", flexDirection: "column", width: "50%" },
-        h(Text, { bold: true }, " Detail"),
-        ...detail)),
-    h(Box, null,
-      h(Text, { color: msg.startsWith("✗") ? "red" : "green" }, ` ${msg}`)),
-    h(Box, null,
+  // ── full-terminal layout ────────────────────────────────
+  const rows = stdout?.rows || 30;
+  const footerH = 3;                                  // title bar + status + controls
+  const paneH = Math.max(6, rows - footerH);          // pane row incl. borders
+  const listH = paneH - 4;                            // minus borders/header/summary
+  const start = stories.length <= listH ? 0
+    : Math.max(0, Math.min(sel - (listH >> 1), stories.length - listH));
+  const visible = stories.slice(start, start + listH);
+  const logH = paneH - 9;                             // detail chrome + log header
+
+  return h(Box, { flexDirection: "column", height: rows, backgroundColor: C.bg },
+    h(Box, { height: 1, backgroundColor: C.panel },
+      (() => {
+        const right = `${state.runningIds.length}/${stories.length} stories · port ${port} `;
+        const pad = Math.max(1, cols - 13 - right.length - 2);
+        return [
+          h(Text, { bold: true, color: C.accent, wrap: false }, ` ◆ synod-lite${" ".repeat(pad)}`),
+          h(Text, { color: C.dim, wrap: false }, right),
+        ];
+      })()),
+    h(Box, { flexDirection: "row", height: paneH },
+      h(Box, { borderStyle: "single", borderColor: C.border, backgroundColor: C.panel, flexDirection: "column", width: "50%" },
+        h(Text, { bold: true, color: C.text }, ` Stories (${stories.length})`),
+        start > 0 ? h(Text, { color: C.dim, wrap: false }, ` ↑ ${start} more`) : null,
+        ...visible.map(line),
+        (start + listH < stories.length) ? h(Text, { color: C.dim, wrap: false }, ` ↓ ${stories.length - start - listH} more`) : null,
+        h(Box, { flexGrow: 1 }),
+        h(Text, { color: C.dim }, ` ${state.runningIds.length} running · workers ${state.config.workers} · auto ${state.config.auto} · trunk ${state.config.trunk}`)),
+      h(Box, { borderStyle: "single", borderColor: C.border, backgroundColor: C.panel, flexDirection: "column", width: "50%" },
+        chat
+          ? [h(Text, { bold: true, color: C.accent }, ` Chat${chat.busy ? " · thinking…" : ""}`),
+             ...chat.msgs.slice(-(paneH - 4)).map((m, i) =>
+               h(Text, { wrap: false, color: m.role === "you" ? C.accent : m.role === "action" ? C.green : C.text },
+                 fit(`${m.role === "you" ? "you ▸ " : m.role === "action" ? "⚡ " : "◂ "}${m.text}`, paneInner))),
+             h(Box, { flexGrow: 1 })]
+          : [h(Text, { bold: true, color: C.text }, " Detail"), ...detail])),
+    h(Box, { height: 1 },
       composer
-        ? h(Text, { color: "cyan", wrap: false }, ` new story ▸ ${composer.buf}▌  `)
-        : h(Text, { dim: true }, " [n]ew  [a]pprove  [r]etry  [m]erge  [K]ill  [l]og  [j/k] move  [q]uit")),
-    composer
-      ? h(Box, null, h(Text, { dim: true, wrap: false }, " Enter create · Esc cancel"))
-      : null,
+        ? h(Text, { color: C.accent, wrap: false }, ` ${chat ? "chat" : "new story"} ▸ ${composer.buf}▌   ⏎ send · esc cancel`)
+        : h(Text, { color: msg.startsWith("✗") ? C.red : C.green, wrap: false }, ` ${msg}`)),
+    h(Box, { height: 1 },
+      h(Text, { color: C.dim, wrap: false }, chat
+        ? " [n] message · esc close chat · [j/k] move · [q]uit"
+        : " [n]ew  [a]pprove  [r]etry  [m]erge  [K]ill  [l]og  [c]hat  [j/k] move  [q]uit")),
   );
 }
 
