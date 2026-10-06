@@ -22,9 +22,9 @@ export function startDaemon(repoRoot: string, cfg: PitbossConfig): Promise<Daemo
     if (activeCount >= cfg.workers) return;
     const next = stories.find(s =>
       !running.has(s.id) &&
-      (s.state === "created" || s.state === "reviewing" ||
-       (s.state === "spec_ready" && s.approved) ||
-       (s.state === "done" && cfg.auto === "full")));
+      (s.state === "drafted" || s.state === "in_review" ||
+       (s.state === "ready_for_user_review" && s.approved) ||
+       (s.state === "ready_for_merge" && cfg.auto === "full")));
     if (!next) return;
     running.add(next.id);
     advance(ctx, next.id)
@@ -103,7 +103,7 @@ export async function handleAction(ctx: Ctx, action: string, id?: string, args: 
       const { createWorktree } = await import("./core/git.ts");
       createWorktree(repo, branch, worktree, cfg.trunk);
       const story: Story = {
-        id: storyId, title, state: "created", branch, worktree, retries: 0,
+        id: storyId, title, state: "drafted", branch, worktree, retries: 0,
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
         approved: false, log: [],
       };
@@ -112,24 +112,24 @@ export async function handleAction(ctx: Ctx, action: string, id?: string, args: 
     }
     case "approve": {
       const s = mustGet(store, id!);
-      if (s.state !== "spec_ready") throw new Error(`${s.id} is '${s.state}', expected spec_ready`);
+      if (s.state !== "ready_for_user_review") throw new Error(`${s.id} is '${s.state}', expected ready_for_user_review`);
       return store.update(s.id, { approved: true });
     }
     case "retry": {
       const s = mustGet(store, id!);
-      if (s.state !== "failed" && s.state !== "needs_human") throw new Error(`${s.id} is '${s.state}' — only failed/needs_human can retry`);
-      return store.update(s.id, { state: "spec_ready", approved: true, retries: 0, error: undefined });
+      if (s.state !== "failed" && s.state !== "blocked") throw new Error(`${s.id} is '${s.state}' — only failed/blocked can retry`);
+      return store.update(s.id, { state: "ready_for_user_review", approved: true, retries: 0, error: undefined });
     }
     case "kill": {
       const s = mustGet(store, id!);
-      if (s.state === "merged" || s.state === "killed") throw new Error(`${s.id} already ${s.state}`);
+      if (s.state === "done" || s.state === "cancelled") throw new Error(`${s.id} already ${s.state}`);
       const { removeWorktree } = await import("./core/git.ts");
       if (s.state !== "merging") removeWorktree(repo, s.worktree, s.branch);
-      return store.update(s.id, { state: "killed" });
+      return store.update(s.id, { state: "cancelled" });
     }
     case "merge": {
       const s = mustGet(store, id!);
-      if (s.state !== "done") throw new Error(`${s.id} is '${s.state}', expected done`);
+      if (s.state !== "ready_for_merge") throw new Error(`${s.id} is '${s.state}', expected done`);
       return advance(ctx, s.id, "merge"); // executes merge path
     }
     case "step": {

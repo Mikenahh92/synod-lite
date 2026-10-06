@@ -2,10 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 export type StoryState =
-  | "created" | "speccing" | "spec_ready"
-  | "developing" | "reviewing"
-  | "done" | "needs_human" | "failed"
-  | "merging" | "merged" | "killed";
+  | "drafted" | "refining" | "ready_for_user_review"
+  | "in_development" | "in_review"
+  | "ready_for_merge" | "blocked" | "failed"
+  | "merging" | "done" | "cancelled";
 
 export interface Story {
   id: string;
@@ -25,19 +25,19 @@ export interface Story {
 
 interface StateFile { stories: Story[]; nextSeq: number }
 
-const ACTIVE: StoryState[] = ["speccing", "developing", "reviewing", "merging"];
+const ACTIVE: StoryState[] = ["refining", "in_development", "in_review", "merging"];
 export const isActive = (s: Story) => ACTIVE.includes(s.state);
-export const isRunnable = (s: Story) => s.state === "created" || (s.state === "spec_ready" && s.approved);
+export const isRunnable = (s: Story) => s.state === "drafted" || (s.state === "ready_for_user_review" && s.approved);
 
 export class Store {
   private repoRoot: string;
   constructor(repoRoot: string) {
     this.repoRoot = repoRoot;
-    fs.mkdirSync(path.join(repoRoot, ".pitboss"), { recursive: true });
-    fs.mkdirSync(path.join(repoRoot, ".pitboss", "logs"), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, ".synod-lite"), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, ".synod-lite", "logs"), { recursive: true });
   }
-  private file = () => path.join(this.repoRoot, ".pitboss", "state.json");
-  private lockDir = () => path.join(this.repoRoot, ".pitboss", ".lock");
+  private file = () => path.join(this.repoRoot, ".synod-lite", "state.json");
+  private lockDir = () => path.join(this.repoRoot, ".synod-lite", ".lock");
 
   private readRaw(): StateFile {
     const f = this.file();
@@ -61,7 +61,7 @@ export class Store {
           const age = Date.now() - fs.statSync(lock).mtimeMs;
           if (age > 1500) { fs.rmdirSync(lock); continue; }
         } catch {}
-        if (Date.now() > deadline) throw new Error("pitboss state lock timeout");
+        if (Date.now() > deadline) throw new Error("synod-lite state lock timeout");
         await sleep(50);
       }
     }
@@ -92,7 +92,7 @@ export class Store {
     await this.withLock(st => { st.stories.push(story); });
   }
   logFile(id: string, phase: string, n: number): string {
-    const dir = path.join(this.repoRoot, ".pitboss", "logs", id);
+    const dir = path.join(this.repoRoot, ".synod-lite", "logs", id);
     fs.mkdirSync(dir, { recursive: true });
     return path.join(dir, `${phase}-${n}.log`);
   }

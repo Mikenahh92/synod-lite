@@ -23,7 +23,7 @@ export const DEFAULTS: PitbossConfig = {
   workers: 2,
   maxRetries: 3,
   auto: "spec",
-  worktreeRoot: ".pitboss/worktrees",
+  worktreeRoot: ".synod-lite/worktrees",
   daemonPort: 8799,
   trunk: "main",
   timeoutMs: 30 * 60 * 1000,
@@ -40,10 +40,10 @@ export function findRepoRoot(start: string = process.cwd()): string {
 }
 
 export function loadConfig(repoRoot: string): PitbossConfig {
-  const file = path.join(repoRoot, ".pitboss.json");
+  const file = path.join(repoRoot, ".synod-lite.json");
   const cfg = { ...DEFAULTS };
   if (fs.existsSync(file)) Object.assign(cfg, JSON.parse(fs.readFileSync(file, "utf8")));
   fs.mkdirSync(path.join(repoRoot, cfg.worktreeRoot), { recursive: true });
-  fs.mkdirSync(path.join(repoRoot, ".pitboss", "logs"), { recursive: true });
+  fs.mkdirSync(path.join(repoRoot, ".synod-lite", "logs"), { recursive: true });
   return cfg;
 }

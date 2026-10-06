@@ -53,22 +53,22 @@ export async function advance(ctx: Ctx, storyId: string, force?: "merge"): Promi
   const wt = path.join(ctx.repo, s.worktree);
 
   switch (s.state) {
-    case "created": {
-      await ctx.store.update(s.id, { state: "speccing" });
+    case "drafted": {
+      await ctx.store.update(s.id, { state: "refining" });
       const code = await phase(ctx, s, "spec", `run the spec workflow for: ${s.title}`);
       s = ctx.store.get(s.id)!;
       const spec = newestSpec(ctx, s);
       if (code === 0 && spec) {
-        await ctx.store.update(s.id, { state: "spec_ready", approved: false, error: undefined });
+        await ctx.store.update(s.id, { state: "ready_for_user_review", approved: false, error: undefined });
       } else {
         await ctx.store.update(s.id, { state: "failed", error: `spec phase exited ${code}${spec ? "" : " (no spec file produced)"}` });
       }
       return ctx.store.get(s.id)!;
     }
 
-    case "spec_ready": {
-      if (!s.approved) throw new Error(`${s.id} is waiting for approval — pitboss approve ${s.id}`);
-      await ctx.store.update(s.id, { state: "developing" });
+    case "ready_for_user_review": {
+      if (!s.approved) throw new Error(`${s.id} is waiting for approval — synod-lite approve ${s.id}`);
+      await ctx.store.update(s.id, { state: "in_development" });
       s = ctx.store.get(s.id)!;
       const spec = newestSpec(ctx, s);
       const slug = spec ? baseName(spec) : "";
@@ -82,14 +82,14 @@ export async function advance(ctx: Ctx, storyId: string, force?: "merge"): Promi
       }
       s = ctx.store.get(s.id)!;
       if (code === 0) {
-        await ctx.store.update(s.id, { state: "reviewing", error: undefined });
+        await ctx.store.update(s.id, { state: "in_review", error: undefined });
       } else {
         await ctx.store.update(s.id, { state: "failed", error: `develop phase exited ${code} (see logs)` });
       }
       return ctx.store.get(s.id)!;
     }
 
-    case "reviewing": {
+    case "in_review": {
       const code = await phase(ctx, s, "review", `run the review workflow for the newest spec`);
       s = ctx.store.get(s.id)!;
       const reviewFile = NEWEST(path.join(wt, ".dev-agents", "output"), "review-");
@@ -100,17 +100,17 @@ export async function advance(ctx: Ctx, storyId: string, force?: "merge"): Promi
       const verdict = parseReviewVerdict(reviewFile);
       const lastReview = { verdict: verdict ?? "FAIL", file: path.basename(reviewFile), at: new Date().toISOString() };
       if (verdict === "PASS") {
-        await ctx.store.update(s.id, { state: "done", lastReview, error: undefined });
+        await ctx.store.update(s.id, { state: "ready_for_merge", lastReview, error: undefined });
       } else if (s.retries < ctx.cfg.maxRetries) {
-        await ctx.store.update(s.id, { state: "spec_ready", approved: true, retries: s.retries + 1, lastReview });
+        await ctx.store.update(s.id, { state: "ready_for_user_review", approved: true, retries: s.retries + 1, lastReview });
       } else {
-        await ctx.store.update(s.id, { state: "needs_human", lastReview, error: `review FAIL after ${s.retries} retries` });
+        await ctx.store.update(s.id, { state: "blocked", lastReview, error: `review FAIL after ${s.retries} retries` });
       }
       return ctx.store.get(s.id)!;
     }
 
-    case "done": {
-      if (ctx.cfg.auto !== "full" && force !== "merge") throw new Error(`${s.id} is done — merge manually: pitboss merge ${s.id}`);
+    case "ready_for_merge": {
+      if (ctx.cfg.auto !== "full" && force !== "merge") throw new Error(`${s.id} is done — merge manually: synod-lite merge ${s.id}`);
       // fallthrough to merging
     }
     // eslint-disable-next-line no-fallthrough
@@ -119,7 +119,7 @@ export async function advance(ctx: Ctx, storyId: string, force?: "merge"): Promi
       try {
         g.squashMerge(ctx.repo, s.branch, ctx.cfg.trunk, s.id, s.title);
         g.removeWorktree(ctx.repo, s.worktree, s.branch);
-        await ctx.store.update(s.id, { state: "merged", error: undefined });
+        await ctx.store.update(s.id, { state: "done", error: undefined });
       } catch (e: any) {
         await ctx.store.update(s.id, { state: "failed", error: `merge failed: ${e.message}` });
       }

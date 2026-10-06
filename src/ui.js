@@ -1,4 +1,4 @@
-// pitboss TUI — ink dashboard (no JSX build step: plain createElement)
+// synod-lite TUI — ink dashboard (no JSX build step: plain createElement)
 import React, { useEffect, useState, useCallback } from "react";
 import { render, Box, Text, useInput, useApp } from "ink";
 import { spawn } from "node:child_process";
@@ -6,9 +6,9 @@ import { callDaemon, isDaemonUp } from "./daemon.ts";
 
 const h = React.createElement;
 const STATE_COLORS = {
-  speccing: "yellow", developing: "cyan", reviewing: "magenta",
-  merging: "blue", done: "green", merged: "green",
-  spec_ready: "yellowBright", needs_human: "red", failed: "red", killed: "gray",
+  refining: "yellow", in_development: "cyan", in_review: "magenta",
+  merging: "blue", ready_for_merge: "green", done: "green",
+  ready_for_user_review: "yellowBright", blocked: "red", failed: "red", cancelled: "gray",
 };
 
 function fetchState(port) {
@@ -49,7 +49,7 @@ function App({ port }) {
       case "k": case key.upArrow: setSel(s => Math.max(s - 1, 0)); break;
       case "n": {
         // new story: quick prompt via external editor is out of scope v0.1 — read title from stdin fallback
-        setMsg("new story: use CLI — pitboss new \"<title>\"");
+        setMsg("new story: use CLI — synod-lite new \"<title>\"");
         setTimeout(() => setMsg(""), 3500);
         break;
       }
@@ -61,12 +61,12 @@ function App({ port }) {
     }
   });
 
-  if (!state) return h(Text, { color: "gray" }, `connecting to pitboss daemon on 127.0.0.1:${port}… (run: pitboss start)`);
+  if (!state) return h(Text, { color: "gray" }, `connecting to synod-lite daemon on 127.0.0.1:${port}… (run: synod-lite start)`);
 
   const line = (s, i) =>
     h(Box, { key: s.id },
       h(Text, { color: i === sel ? "black" : (STATE_COLORS[s.state] ?? "white"), backgroundColor: i === sel ? "cyan" : undefined },
-        ` ${s.running ? "●" : s.state === "merged" ? "✓" : s.state === "spec_ready" ? "◆" : "○"} `),
+        ` ${s.running ? "●" : s.state === "done" ? "✓" : s.state === "ready_for_user_review" ? "◆" : "○"} `),
       h(Text, { color: i === sel ? "cyan" : "white", bold: i === sel },
         `${s.id} ${s.title.slice(0, 30).padEnd(30)} `),
       h(Text, { color: STATE_COLORS[s.state] ?? "white" },
@@ -87,16 +87,16 @@ function App({ port }) {
               h(Text, null, (state.tails[cur.id] || "(no log output)").split("\n").slice(-18).join("\n").slice(-2000)))
           : h(Text, { color: "gray" }, `phases: ${cur.log.map(l => l.phase).join(" → ") || "none yet"}`),
       ].filter(Boolean)
-    : [h(Text, { color: "gray" }, "no stories — pitboss new \"<title>\"")];
+    : [h(Text, { color: "gray" }, "no stories — synod-lite new \"<title>\"")];
 
   return h(Box, { flexDirection: "column", height: "100%" },
     h(Box, { flexDirection: "row" },
-      h(Box, { borderStyle: "round", flexDirection: "column", width: "50%" },
+      h(Box, { borderStyle: "single", flexDirection: "column", width: "50%" },
         h(Text, { bold: true }, ` Stories (${stories.length})`),
         ...stories.map(line),
         h(Text, { color: "gray" }, ""),
         h(Text, { color: "gray" }, ` ${state.runningIds.length} running · workers ${state.config.workers} · auto ${state.config.auto} · trunk ${state.config.trunk}`)),
-      h(Box, { borderStyle: "round", flexDirection: "column", width: "50%" },
+      h(Box, { borderStyle: "single", flexDirection: "column", width: "50%" },
         h(Text, { bold: true }, " Detail"),
         ...detail)),
     h(Box, null,
@@ -110,12 +110,12 @@ export async function runUI(repo, port) {
   if (!(await isDaemonUp(port))) {
     // auto-start daemon in background
     const me = new URL(import.meta.url).pathname;
-    const bin = me.replace(/src\/ui\.js$/, "bin/pitboss.js");
+    const bin = me.replace(/src\/ui\.js$/, "bin/synod-lite.js");
     const child = spawn(process.execPath, [bin, "start", "--fg"], { detached: true, stdio: "ignore", cwd: repo });
     child.unref();
     await new Promise(r => setTimeout(r, 600));
     if (!(await isDaemonUp(port))) {
-      console.error("could not start pitboss daemon");
+      console.error("could not start synod-lite daemon");
       process.exit(1);
     }
   }

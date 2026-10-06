@@ -6,15 +6,15 @@ import { Store } from "../src/core/store.ts";
 import { isDaemonUp, callDaemon, startDaemon } from "../src/daemon.ts";
 import { handleAction } from "../src/daemon.ts";
 
-const HELP = `pitboss — story harness for pi + dev-agents
+const HELP = `synod-lite — story harness for pi + dev-agents
 
-Usage: pitboss <command> [args]
+Usage: synod-lite <command> [args]
   new "<title>"        create a story (worktree + branch), spec starts automatically (daemon)
   list                 overview of all stories
   show <id>            story details (state, retries, last review, logs)
   approve <id>         approve the spec — development starts automatically (daemon)
-  retry <id>           reset a failed/needs_human story to re-develop (retries reset)
-  kill <id>            remove worktree, mark killed
+  retry <id>           reset a failed/blocked story to re-develop (retries reset)
+  kill <id>            remove worktree, mark cancelled
   merge <id>           squash-merge a done story into the trunk branch
   log <id>             tail the latest phase log
   start [--fg]         start the daemon (background unless --fg)
@@ -22,7 +22,7 @@ Usage: pitboss <command> [args]
   step <id>            single-step a story without the daemon (blocking)
   ui                   TUI dashboard (starts daemon if needed)
 
-Configuration: .pitboss.json in the repo root
+Configuration: .synod-lite.json in the repo root
   { "piBin": "pi", "provider": "local", "model": "<id>", "workers": 2,
     "maxRetries": 3, "auto": "spec"|"review"|"full", "trunk": "main" }`;
 
@@ -40,7 +40,7 @@ async function withDaemonOrDirect(cfg, fn) {
 }
 
 function printStories(stories) {
-  if (!stories.length) return console.log("no stories yet — pitboss new \"<title>\"");
+  if (!stories.length) return console.log("no stories yet — synod-lite new \"<title>\"");
   const state = (s) => s.running ? `${s.state.toUpperCase()}*` : s.state.replace("_", " ").toUpperCase();
   const w = Math.max(...stories.map(s => (s.id + " " + s.title).length)) + 2;
   for (const s of stories) {
@@ -67,10 +67,10 @@ async function main() {
   switch (cmd) {
     case "new": {
       const title = rest.join(" ");
-      if (!title) { console.error('usage: pitboss new "<title>"'); process.exit(1); }
+      if (!title) { console.error('usage: synod-lite new "<title>"'); process.exit(1); }
       const s = await action("new", undefined, { title });
-      console.log(`created ${s.id} · branch ${s.branch} · worktree ${s.worktree}`);
-      if (!(await isDaemonUp(cfg.daemonPort))) console.log("(daemon not running — start it: pitboss start)");
+      console.log(`drafted ${s.id} · branch ${s.branch} · worktree ${s.worktree}`);
+      if (!(await isDaemonUp(cfg.daemonPort))) console.log("(daemon not running — start it: synod-lite start)");
       break;
     }
     case "list": {
@@ -90,10 +90,10 @@ async function main() {
     }
     case "approve": await action("approve", rest[0]); console.log(`approved ${rest[0]} — development will start`); break;
     case "retry": await action("retry", rest[0]); console.log(`reset ${rest[0]} for re-development`); break;
-    case "kill": await action("kill", rest[0]); console.log(`killed ${rest[0]} (worktree removed)`); break;
+    case "kill": await action("kill", rest[0]); console.log(`cancelled ${rest[0]} (worktree removed)`); break;
     case "merge": {
       const s = await action("merge", rest[0]);
-      console.log(s.state === "merged" ? `merged ${rest[0]} into ${cfg.trunk}` : `merge state: ${s.state} ${s.error ?? ""}`);
+      console.log(s.state === "done" ? `merged ${rest[0]} into ${cfg.trunk}` : `merge state: ${s.state} ${s.error ?? ""}`);
       break;
     }
     case "step": {
@@ -113,7 +113,7 @@ async function main() {
       if (await isDaemonUp(cfg.daemonPort)) { console.log("daemon already running"); break; }
       if (rest[0] === "--fg") {
         const d = await startDaemon(repo, cfg);
-        console.log(`pitboss daemon on 127.0.0.1:${d.port} (ctrl-c to stop)`);
+        console.log(`synod-lite daemon on 127.0.0.1:${d.port} (ctrl-c to stop)`);
         process.on("SIGINT", async () => { await d.stop(); process.exit(0); });
         return new Promise(() => {});
       }

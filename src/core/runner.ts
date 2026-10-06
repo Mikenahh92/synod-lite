@@ -23,10 +23,10 @@ export async function runPi(
     const out = fs.createWriteStream(logFile, { flags: "w" });
     const t0 = Date.now();
     const child = spawn(cfg.piBin, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
-    let killed = false;
+    let cancelled = false;
     const timer = setTimeout(() => {
-      killed = true;
-      out.write(`\n[pitboss] timeout after ${cfg.timeoutMs}ms — killing\n`);
+      cancelled = true;
+      out.write(`\n[synod-lite] timeout after ${cfg.timeoutMs}ms — killing\n`);
       child.kill("SIGKILL");
     }, cfg.timeoutMs);
     child.stdout.pipe(out);
@@ -34,11 +34,11 @@ export async function runPi(
     child.on("close", (code) => {
       clearTimeout(timer);
       out.end();
-      resolve({ code: killed ? 124 : (code ?? 1), durationMs: Date.now() - t0 });
+      resolve({ code: cancelled ? 124 : (code ?? 1), durationMs: Date.now() - t0 });
     });
     child.on("error", (err) => {
       clearTimeout(timer);
-      out.write(`\n[pitboss] spawn error: ${err.message}\n`);
+      out.write(`\n[synod-lite] spawn error: ${err.message}\n`);
       out.end();
       resolve({ code: 127, durationMs: Date.now() - t0 });
     });
