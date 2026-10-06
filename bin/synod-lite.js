@@ -52,7 +52,9 @@ function printStories(stories) {
   for (const s of stories) {
     const label = (CLI_LABEL[s.state] ?? s.state) + (s.running ? "*" : "");
     const title = s.title.length > titleW ? s.title.slice(0, titleW - 1) + "…" : s.title.padEnd(titleW);
-    console.log(`${s.id} ${title} ${label.padEnd(stateW)} r${s.retries}${s.lastReview ? (s.lastReview.verdict === "PASS" ? " ✓" : " ✗") : ""}${s.error ? "  ⚠ " + s.error : ""}`);
+    const err = s.error ? `  ⚠ ${s.error}` : "";
+    const base = `${s.id} ${title} ${label.padEnd(stateW)} r${s.retries}${s.lastReview ? (s.lastReview.verdict === "PASS" ? " ✓" : " ✗") : ""}`;
+    console.log(err && base.length + err.length > cols ? base + err.slice(0, cols - base.length - 1) + "…" : base + err);
   }
 }
 
@@ -91,8 +93,19 @@ async function main() {
     case "show": {
       const s = store.get(rest[0] ?? "");
       if (!s) { console.error("story not found"); process.exit(1); }
-      console.log(JSON.stringify(s, null, 2));
-      if (s.lastReview) console.log(`\nlast review: ${s.lastReview.verdict} — ${s.lastReview.file}`);
+      const cols = process.stdout.columns || 100;
+      const fit = (t, w) => t.length > w ? t.slice(0, w - 1) + "…" : t;
+      const kv = (k, v) => fit(`${k.padEnd(13)}${v}`, cols);
+      console.log(`${s.id} · ${s.title}`);
+      console.log(kv("state", `${s.state}${s.running ? " (running)" : ""}`));
+      console.log(kv("retries", String(s.retries)));
+      console.log(kv("branch", s.branch));
+      console.log(kv("worktree", s.worktree));
+      console.log(kv("created", String(s.createdAt).slice(0, 16).replace("T", " ")));
+      console.log(kv("updated", String(s.updatedAt).slice(0, 16).replace("T", " ")));
+      if (s.lastReview) console.log(kv("last review", `${s.lastReview.verdict} — ${s.lastReview.file}`));
+      if (s.error) console.log(kv("error", `⚠ ${s.error}`));
+      console.log(kv("phases", s.log.map(l => l.phase).join(" → ") || "none yet"));
       break;
     }
     case "approve": await action("approve", rest[0]); console.log(`approved ${rest[0]} — development will start`); break;
