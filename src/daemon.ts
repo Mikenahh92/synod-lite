@@ -110,16 +110,57 @@ export async function handleAction(ctx: Ctx, action: string, id?: string, args: 
       await store.add(story);
       return story;
     }
+    case "spec": {
+      // spec page: read spec + test-design + review from the story worktree; lock = past spec stage
+      const st = store.get(id);
+      if (!st) throw new Error("story not found: " + id);
+      const wt = path.join(repo, st.worktree);
+      const specsDir = path.join(wt, ".dev-agents", "specs");
+      const outDir = path.join(wt, ".dev-agents", "output");
+      const readNewest = (dir, prefix) => {
+        try {
+          const f = fs.readdirSync(dir).filter(n => n.startsWith(prefix)).sort().pop();
+          return f ? fs.readFileSync(path.join(dir, f), "utf8").slice(0, 20000) : null;
+        } catch { return null; }
+      };
+      const LOCKED = ["in_development", "in_review", "ready_for_merge", "merging", "done"];
+      return {
+        spec: fs.existsSync(specsDir)
+          ? fs.readFileSync(path.join(specsDir, (fs.readdirSync(specsDir).filter(n => n.endsWith(".md") && !n.startsWith("test-design")).sort().pop() ?? "")), "utf8").slice(0, 20000)
+          : null,
+        testDesign: readNewest(specsDir, "test-design"),
+        review: st.lastReview ? readNewest(outDir, "review-") : null,
+        locked: LOCKED.includes(st.state),
+        state: st.state,
+      };
+    }
     case "chat": {
       // agent chat: pi session with story-state context; may execute non-gate actions
       const message = String(args.message ?? "").slice(0, 2000);
       if (!message.trim()) throw new Error("message required");
       const { runPi } = await import("./core/runner.ts");
       const snap = store.stories().map(({ id, title, state, retries }) => ({ id, title, state, retries }));
+      const focus = store.get(String(args.focus ?? ""));
+      let focusCtx = "";
+      if (focus) {
+        const LOCKED = ["in_development", "in_review", "ready_for_merge", "merging", "done"];
+        let specEx = null;
+        try {
+          const dir = path.join(repo, focus.worktree, ".dev-agents", "specs");
+          const f = fs.readdirSync(dir).filter(n => n.endsWith(".md") && !n.startsWith("test-design")).sort().pop();
+          if (f) specEx = fs.readFileSync(path.join(dir, f), "utf8").slice(0, 1200);
+        } catch {}
+        focusCtx = "\nThe operator currently has story " + focus.id + " (" + focus.title + ", state " + focus.state + ") in focus.\n"
+          + (specEx ? "Its spec (excerpt):\n" + specEx + "\n" : "No spec authored yet.\n")
+          + (LOCKED.includes(focus.state)
+            ? "This story is past the spec stage: the spec is LOCKED. Do not propose spec edits; advise on progress, reviews, retries, or merging instead."
+            : "The spec is still editable (story not yet in development).");
+      }
       const sys = [
         "You are the synod-lite assistant, embedded in a story dashboard the operator is looking at.",
         "Current stories (JSON): " + JSON.stringify(snap),
         "Help the operator: explain states, summarise progress, advise next steps.",
+        focusCtx,
         "You may end your reply with exactly ONE action line: ACTION: <command>",
         "Allowed actions: ACTION: new \"<title>\"  |  ACTION: retry <id>  |  ACTION: kill <id>",
         "approve and merge are human gates — NEVER issue them; tell the operator to press a/m instead.",

@@ -39,6 +39,7 @@ function App({ port }) {
   const [showLog, setShowLog] = useState(false);
   const [composer, setComposer] = useState(null); // { buf } while typing (new story or chat)
   const [chat, setChat] = useState(null);          // { msgs: [{role, text}] } when chat column open
+  const [specView, setSpecView] = useState(null);  // { id, title, lines, scroll, locked } when spec page open
 
   useEffect(() => {
     const iv = setInterval(() => fetchState(port).then(setState).catch(() => {}), 1000);
@@ -61,7 +62,7 @@ function App({ port }) {
   const sendChat = useCallback(async (text) => {
     setChat(c => ({ ...(c ?? { msgs: [] }), msgs: [...(c?.msgs ?? []), { role: "you", text }], busy: true }));
     try {
-      const r = await callDaemon(port, "chat", undefined, { message: text });
+      const r = await callDaemon(port, "chat", undefined, { message: text, focus: cur?.id });
       setChat(c => ({ msgs: [...c.msgs, { role: "agent", text: r.reply },
         ...(r.action ? [{ role: "action", text: `${r.action} → ${r.actionResult}` }] : [])], busy: false }));
     } catch (e) {
@@ -84,13 +85,18 @@ function App({ port }) {
       if (ch && ch.length === 1 && !key.ctrl && !key.meta) { setComposer({ buf: (composer.buf + ch).slice(0, 80) }); return; }
       return;
     }
+    if (key.escape && specView) { setSpecView(null); return; }
     if (key.escape && chat) { setChat(null); return; }
     if (key.return && showLog) { setShowLog(false); return; }
     if (showLog) return;
     switch (ch) {
       case "q": exit(); break;
-      case "j": case key.downArrow: setSel(s => Math.min(s + 1, stories.length - 1)); break;
-      case "k": case key.upArrow: setSel(s => Math.max(s - 1, 0)); break;
+      case "j": case key.downArrow:
+        if (specView) setSpecView(v => ({ ...v, scroll: Math.min(v.scroll + 1, Math.max(0, v.lines.length)) }));
+        else setSel(s => Math.min(s + 1, stories.length - 1)); break;
+      case "k": case key.upArrow:
+        if (specView) setSpecView(v => ({ ...v, scroll: Math.max(0, v.scroll - 1) }));
+        else setSel(s => Math.max(s - 1, 0)); break;
       case "n": setComposer({ buf: "" }); break;
       case "c": setChat(chat ? null : { msgs: [] }); break;
       case "a": act("approve"); break;
@@ -98,6 +104,16 @@ function App({ port }) {
       case "m": act("merge"); break;
       case "K": act("kill"); break;
       case "l": setShowLog(true); break;
+    case "s": {
+      if (specView) setSpecView(null);
+      else if (cur) callDaemon(port, "spec", cur.id).then(r =>
+        setSpecView({ id: cur.id, title: cur.title, lines: [
+          ...(r.spec ?? "(no spec authored yet)").split("\n"),
+          "", "── test design ──", ...(r.testDesign ?? "(none)").split("\n"),
+          ...(r.review ? ["", "── last review ──", ...r.review.split("\n")] : []),
+        ], scroll: 0, locked: r.locked, state: r.state })).catch(e => setMsg(`✗ ${e.message}`));
+      break;
+    }
     }
   });
 
@@ -200,8 +216,24 @@ function App({ port }) {
         h(Box, { flexGrow: 1 }),
         h(Text, { color: C.dim }, ` ${state.runningIds.length} running · workers ${state.config.workers} · auto ${state.config.auto} · trunk ${state.config.trunk}`)),
       h(Box, { width: 2 }),
-      h(Box, { borderStyle: "single", borderColor: chat ? C.accent : C.border, backgroundColor: C.panel, flexDirection: "column", width: rightW },
-        chat
+      h(Box, { borderStyle: "single", borderColor: specView ? C.accent : chat ? C.accent : C.border, backgroundColor: C.panel, flexDirection: "column", width: rightW },
+        specView
+          ? (() => {
+              const specH = paneH - 5;
+              const win = specView.lines.slice(specView.scroll, specView.scroll + specH);
+              const lockLine = specView.locked
+                ? `🔒 spec LOCKED — story ${specView.state} (edits via harness actions only)`
+                : `● spec editable — story not yet in development`;
+              return [
+                h(Text, { bold: true, color: C.accent, wrap: false }, ` Spec · ${specView.id}`),
+                h(Text, { wrap: false, color: specView.locked ? C.red : C.green }, ` ${fit(lockLine, contentW)}`),
+                h(Text, { color: C.dim, wrap: false }, ` ${fit(specView.title, contentW)}`),
+                ...win.map((l, i) => h(Text, { key: i, wrap: false, color: C.text }, ` ${fit(l, contentW)}`)),
+                h(Box, { flexGrow: 1 }),
+                h(Text, { color: C.dim, wrap: false }, ` ${specView.scroll}/${specView.lines.length} · j/k scroll · esc close`),
+              ];
+            })()
+          : chat
           ? [h(Text, { bold: true, color: C.accent }, ` Chat${chat.busy ? ` ${fit("· thinking…", contentW - 5)}` : ""}`),
              ...chat.msgs.slice(-(paneH - 4)).map((m, i) =>
                h(Text, { wrap: false, color: m.role === "you" ? C.accent : m.role === "action" ? C.green : C.text },
@@ -218,7 +250,7 @@ function App({ port }) {
            h(Text, { color: C.accent, wrap: false }, "esc"), h(Text, { color: C.dim, wrap: false }, " close chat  "),
            h(Text, { color: C.accent, wrap: false }, "j/k"), h(Text, { color: C.dim, wrap: false }, " move  "),
            h(Text, { color: C.accent, wrap: false }, "q"), h(Text, { color: C.dim, wrap: false }, " uit")]
-        : [["n","ew"],["a","pprove"],["r","etry"],["m","erge"],["K","ill"],["l","og"],["c","hat"],["j/k"," move"],["q","uit"]]
+        : [["n","ew"],["a","pprove"],["r","etry"],["m","erge"],["K","ill"],["l","og"],["c","hat"],["s","pec"],["j/k"," move"],["q","uit"]]
           .flatMap(([k, rest], i) => [
             ...(i ? [h(Text, { color: C.border, wrap: false }, " · ")] : []),
             h(Text, { color: C.accent, wrap: false }, ` ${k}`),
