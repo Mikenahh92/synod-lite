@@ -1,0 +1,10 @@
+{
+  "name": "pitboss",
+  "version": "0.1.0",
+  "description": "Story harness for pi + dev-agents: worktrees, gated pipeline, TUI dashboard",
+  "type": "module",
+  "bin": { "pitboss": "./bin/pitboss.js" },
+  "scripts": { "test": "node --test test/e2e.test.js" },
+  "engines": { "node": ">=20" },
+  "dependencies": { "ink": "^5.1.0", "react": "^18.3.1" }
+}

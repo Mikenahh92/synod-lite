@@ -1,0 +1,11 @@
+{
+  "piBin": "pi",
+  "provider": "local",
+  "model": "your-model-id",
+  "workers": 2,
+  "maxRetries": 3,
+  "auto": "spec",
+  "trunk": "main",
+  "timeoutMs": 1800000,
+  "daemonPort": 8799
+}
