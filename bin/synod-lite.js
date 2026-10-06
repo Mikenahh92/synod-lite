@@ -39,13 +39,20 @@ async function withDaemonOrDirect(cfg, fn) {
   return fn.direct();
 }
 
+const CLI_LABEL = {
+  drafted: "DRAFTED", refining: "REFINING", ready_for_user_review: "AWAIT OK", in_development: "DEVELOPING",
+  in_review: "IN REVIEW", merging: "MERGING", ready_for_merge: "MERGEABLE", done: "DONE",
+  blocked: "BLOCKED", failed: "FAILED", cancelled: "CANCELLED",
+};
 function printStories(stories) {
   if (!stories.length) return console.log("no stories yet — synod-lite new \"<title>\"");
-  const state = (s) => s.running ? `${s.state.toUpperCase()}*` : s.state.replace("_", " ").toUpperCase();
-  const w = Math.max(...stories.map(s => (s.id + " " + s.title).length)) + 2;
+  const cols = process.stdout.columns || 100;
+  const stateW = 10, retryW = 9;
+  const titleW = Math.max(10, cols - 6 - 2 - stateW - 1 - retryW);
   for (const s of stories) {
-    const line = `${s.id} ${s.title}`;
-    console.log(`${line.padEnd(w)} ${state(s).padEnd(14)} retries ${s.retries}${s.error ? "  ⚠ " + s.error : ""}`);
+    const label = (CLI_LABEL[s.state] ?? s.state) + (s.running ? "*" : "");
+    const title = s.title.length > titleW ? s.title.slice(0, titleW - 1) + "…" : s.title.padEnd(titleW);
+    console.log(`${s.id} ${title} ${label.padEnd(stateW)} r${s.retries}${s.lastReview ? (s.lastReview.verdict === "PASS" ? " ✓" : " ✗") : ""}${s.error ? "  ⚠ " + s.error : ""}`);
   }
 }
 

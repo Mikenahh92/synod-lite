@@ -1,6 +1,6 @@
 // synod-lite TUI — ink dashboard (no JSX build step: plain createElement)
 import React, { useEffect, useState, useCallback } from "react";
-import { render, Box, Text, useInput, useApp } from "ink";
+import { render, Box, Text, useInput, useApp, useStdout } from "ink";
 import { spawn } from "node:child_process";
 import { callDaemon, isDaemonUp } from "./daemon.ts";
 
@@ -10,6 +10,15 @@ const STATE_COLORS = {
   merging: "blue", ready_for_merge: "green", done: "green",
   ready_for_user_review: "yellowBright", blocked: "red", failed: "red", cancelled: "gray",
 };
+// compact, fixed-width display labels (max 10 chars) — layout stays deterministic
+const LABEL = {
+  drafted: "DRAFTED", refining: "REFINING", ready_for_user_review: "AWAITING",
+  in_development: "DEVELOPING", in_review: "IN REVIEW", merging: "MERGING",
+  ready_for_merge: "MERGEABLE", done: "DONE", blocked: "BLOCKED",
+  failed: "FAILED", cancelled: "CANCELLED",
+};
+const trunc = (t, n) => (t.length > n ? t.slice(0, Math.max(0, n - 1)) + "…" : t).padEnd(n);
+const fit = (t, n) => (t.length > n ? t.slice(0, Math.max(0, n - 1)) + "…" : t);
 
 function fetchState(port) {
   return fetch(`http://127.0.0.1:${port}/state`).then(r => r.json());
@@ -17,6 +26,7 @@ function fetchState(port) {
 
 function App({ port }) {
   const { exit } = useApp();
+  const { stdout } = useStdout();
   const [state, setState] = useState(null);
   const [sel, setSel] = useState(0);
   const [msg, setMsg] = useState("");
@@ -63,29 +73,35 @@ function App({ port }) {
 
   if (!state) return h(Text, { color: "gray" }, `connecting to synod-lite daemon on 127.0.0.1:${port}… (run: synod-lite start)`);
 
+  // deterministic column math — rows can never overflow their pane
+  const cols = stdout?.columns || 110;
+  const paneInner = Math.floor(cols / 2) - 2; // border chars
+  const titleW = paneInner - 24;              // icon+id+state+retries gutter
+  const rowBg = (i) => (i === sel ? "cyan" : undefined);
+
   const line = (s, i) =>
     h(Box, { key: s.id },
-      h(Text, { color: i === sel ? "black" : (STATE_COLORS[s.state] ?? "white"), backgroundColor: i === sel ? "cyan" : undefined },
-        ` ${s.running ? "●" : s.state === "done" ? "✓" : s.state === "ready_for_user_review" ? "◆" : "○"} `),
-      h(Text, { color: i === sel ? "cyan" : "white", bold: i === sel },
-        `${s.id} ${s.title.slice(0, 30).padEnd(30)} `),
-      h(Text, { color: STATE_COLORS[s.state] ?? "white" },
-        (s.running ? s.state.toUpperCase() + "*" : s.state.replace("_", " ").toUpperCase()).padEnd(14)),
-      h(Text, { color: "gray" }, ` r${s.retries}${s.lastReview ? " " + s.lastReview.verdict : ""}`));
+      h(Text, { wrap: false, color: i === sel ? "black" : (STATE_COLORS[s.state] ?? "white"), backgroundColor: rowBg(i) },
+        ` ${s.running ? "●" : s.state === "done" ? "✓" : s.state === "ready_for_user_review" ? "◆" : "○"} ${s.id} ${trunc(s.title, titleW)}`),
+      h(Text, { wrap: false, color: i === sel ? "black" : (STATE_COLORS[s.state] ?? "white"), backgroundColor: rowBg(i) },
+        `${((LABEL[s.state] ?? s.state) + (s.running ? "*" : "")).padStart(10)}`),
+      h(Text, { wrap: false, color: i === sel ? "black" : "gray", backgroundColor: rowBg(i) },
+        ` r${s.retries}${s.lastReview ? (s.lastReview.verdict === "PASS" ? "✓" : "✗") : " "}`));
 
+  const T = (props, t) => h(Text, { ...props, wrap: false }, fit(t, paneInner));
   const detail = cur
     ? [
-        h(Text, { bold: true }, `${cur.id} · ${cur.title}`),
-        h(Text, { color: STATE_COLORS[cur.state] ?? "white" }, `state: ${cur.state}${cur.running ? " (running)" : ""} · retries ${cur.retries}`),
-        h(Text, { color: "gray" }, `branch ${cur.branch} · worktree ${cur.worktree}`),
-        cur.lastReview ? h(Text, { color: cur.lastReview.verdict === "PASS" ? "green" : "red" }, `last review: ${cur.lastReview.verdict} — ${cur.lastReview.file}`) : null,
-        cur.error ? h(Text, { color: "red" }, `⚠ ${cur.error}`) : null,
-        h(Text, { color: "gray" }, ""),
+        T({ bold: true }, `${cur.id} · ${cur.title}`),
+        T({ color: STATE_COLORS[cur.state] ?? "white" }, `state: ${cur.state}${cur.running ? " (running)" : ""} · retries ${cur.retries}`),
+        T({ color: "gray" }, `branch ${cur.branch} · worktree ${cur.worktree}`),
+        cur.lastReview ? T({ color: cur.lastReview.verdict === "PASS" ? "green" : "red" }, `last review: ${cur.lastReview.verdict} — ${cur.lastReview.file}`) : null,
+        cur.error ? T({ color: "red" }, `⚠ ${cur.error}`) : null,
+        h(Text, { color: "gray", wrap: false }, ""),
         showLog
           ? h(Box, { flexDirection: "column" },
-              h(Text, { bold: true }, `── log (last phase: ${cur.log[cur.log.length - 1]?.phase ?? "none"}) ──`),
-              h(Text, null, (state.tails[cur.id] || "(no log output)").split("\n").slice(-18).join("\n").slice(-2000)))
-          : h(Text, { color: "gray" }, `phases: ${cur.log.map(l => l.phase).join(" → ") || "none yet"}`),
+              h(Text, { bold: true, wrap: false }, fit(`── log (last phase: ${cur.log[cur.log.length - 1]?.phase ?? "none"}) ──`, paneInner)),
+              h(Text, { wrap: false }, (state.tails[cur.id] || "(no log output)").split("\n").slice(-18).map(l => fit(l, paneInner)).join("\n")))
+          : T({ color: "gray" }, `phases: ${cur.log.map(l => l.phase).join(" → ") || "none yet"}`),
       ].filter(Boolean)
     : [h(Text, { color: "gray" }, "no stories — synod-lite new \"<title>\"")];
 
