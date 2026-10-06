@@ -14,7 +14,7 @@ export interface Daemon {
 export function startDaemon(repoRoot: string, cfg: PitbossConfig): Promise<Daemon> {
   const store = new Store(repoRoot);
   const ctx: Ctx = { repo: repoRoot, cfg, store };
-  const running = new Set<string>();
+  const running = new Map<string, { startedAt: number; phase: string }>();
 
   async function tick() {
     const stories = store.stories();
@@ -26,7 +26,10 @@ export function startDaemon(repoRoot: string, cfg: PitbossConfig): Promise<Daemo
        (s.state === "ready_for_user_review" && s.approved) ||
        (s.state === "ready_for_merge" && cfg.auto === "full")));
     if (!next) return;
-    running.add(next.id);
+    const phase = next.state === "drafted" ? "spec"
+      : next.state === "in_review" ? "review"
+      : next.state === "ready_for_merge" ? "merge" : "develop";
+    running.set(next.id, { startedAt: Date.now(), phase });
     advance(ctx, next.id)
       .catch(e => store.update(next.id, { state: "failed", error: e.message }).catch(() => {}))
       .finally(() => running.delete(next.id));
@@ -40,18 +43,17 @@ export function startDaemon(repoRoot: string, cfg: PitbossConfig): Promise<Daemo
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({
         stories: stories.map(s => ({ ...s, running: running.has(s.id) })),
-        runningIds: [...running],
+        runningIds: [...running.keys()],
+        runs: Object.fromEntries(running),
         config: { workers: cfg.workers, maxRetries: cfg.maxRetries, auto: cfg.auto, trunk: cfg.trunk },
-        tails: Object.fromEntries(
-          (stories.length ? [stories.reduce((a, b) => (a.updatedAt > b.updatedAt ? a : b))] : []).map(s => {
-            const last = s.log[s.log.length - 1];
-            if (!last) return [s.id, ""];
-            const abs = path.join(repoRoot, last.file);
-            if (!fs.existsSync(abs)) return [s.id, ""];
-            const lines = fs.readFileSync(abs, "utf8").split("\n");
-            return [s.id, lines.slice(-30).join("\n")];
-          })
-        ),
+        tails: Object.fromEntries(stories.map(s => {
+          const last = s.log[s.log.length - 1];
+          if (!last) return [s.id, ""];
+          const abs = path.join(repoRoot, last.file);
+          if (!fs.existsSync(abs)) return [s.id, ""];
+          const lines = fs.readFileSync(abs, "utf8").split("\n");
+          return [s.id, lines.slice(-40).join("\n")];
+        })),
       }));
       return;
     }

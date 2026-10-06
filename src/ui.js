@@ -62,6 +62,18 @@ function App({ port }) {
     return () => clearInterval(iv);
   }, [port]);
 
+  // spinner: braille frames (single-cell, row-safe); ticks re-render so elapsed stays live
+  const SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+  const [spin, setSpin] = useState(0);
+  useEffect(() => { const iv = setInterval(() => setSpin(x => x + 1), 150); return () => clearInterval(iv); }, []);
+  const spinFrame = SPIN[spin % SPIN.length];
+  const runOf = (id) => state?.runs?.[id];
+  const elapsed = (id) => {
+    const r = runOf(id); if (!r) return "";
+    const sec = Math.max(0, Math.floor((Date.now() - r.startedAt) / 1000));
+    return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+  };
+
   const storiesAll = state?.stories ?? [];
   const filtered = storiesAll.filter(s =>
     (filter.status === "all" ? true
@@ -215,12 +227,16 @@ function App({ port }) {
   };
 
   const line = (s, i) => {
-    const icon = s.running ? "●" : s.state === "done" ? "✓" : s.state === "ready_for_user_review" ? "◆" : "○";
-    const label = ((LABEL[s.state] ?? s.state) + (s.running ? "*" : "")).padStart(10);
+    const r = runOf(s);
+    const PHASE4 = { spec: "spec", develop: "dev", review: "rev", merge: "mrg" };
+    const icon = s.running ? spinFrame : s.state === "done" ? "✓" : s.state === "ready_for_user_review" ? "◆" : "○";
+    const label = s.running
+      ? `${PHASE4[r?.phase] ?? "run"} ${elapsed(s.id)}`.padStart(10)
+      : (LABEL[s.state] ?? s.state).padStart(10);
     const verdict = ` r${s.retries}${s.lastReview ? (s.lastReview.verdict === "PASS" ? "✓" : "✗") : " "}`;
     const head = ` ${icon} ${s.id} `;
     const mk = (key, body) => h(Text, { key, wrap: false, bold: i === sel,
-      color: i === sel ? "#0F1117" : (STATE_COLORS[s.state] ?? C.text), backgroundColor: rowBg(i) }, body);
+      color: i === sel ? "#0F1117" : s.running ? C.accent : (STATE_COLORS[s.state] ?? C.text), backgroundColor: rowBg(i) }, body);
     const [t1, t2] = wrapTitle(s.title, titleW, titleW - head.length);
     const spacer = Math.max(2, titleW + 1 - t1.length);
     const rows = [mk(s.id, `${head}${t1}${" ".repeat(spacer)}${label}${verdict}`)];
@@ -260,7 +276,9 @@ function App({ port }) {
       ...v.docs.filter(d => d.name !== "Details").map(d => `  ${d.name}: ${d.lines ? d.lines.length + " lines" : "live"}`),
     ].filter(x => x !== "");
     if (doc.name === "Log") return [
-      `── log tail (last phase: ${st.log[st.log.length - 1]?.phase ?? "none"}) ──`,
+      st.running
+        ? `${spinFrame} LIVE — agent working (${runOf(st.id)?.phase} workflow, ${elapsed(st.id)} elapsed) — updates every second`
+        : `── log tail (last phase: ${st.log[st.log.length - 1]?.phase ?? "none"}) ──`,
       ...(state.tails?.[st.id] || "(no log output)").split("\n"),
     ];
     return doc.lines ?? [];
@@ -322,8 +340,10 @@ function App({ port }) {
                     : "● spec editable — story not yet in development";
                   return [
                     // fixed header (title lives in the top bar)
-                    h(Text, { wrap: false, color: STATE_COLORS[detailView.state] ?? C.text, key: "st" },
-                      ` state ${detailView.state} · retries ${st?.retries ?? "?"}${st?.lastReview ? ` · review ${st.lastReview.verdict}` : ""}`),
+                    detailView && runOf(st) ? h(Text, { wrap: false, color: C.accent, key: "run" },
+                      ` ${spinFrame} agent running · ${runOf(st.id)?.phase} workflow · ${elapsed(detailView.id)} elapsed`) : null,
+                    h(Text, { wrap: false, color: STATE_COLORS[st?.state ?? detailView.state] ?? C.text, key: "st" },
+                      ` state ${st?.state ?? detailView.state} · retries ${st?.retries ?? "?"}${st?.lastReview ? ` · review ${st.lastReview.verdict}` : ""}`),
                     h(Text, { wrap: false, color: doc.name === "Spec" ? (detailView.locked ? C.red : C.green) : C.border, key: "lk" },
                       ` ${fit(doc.name === "Spec" ? lockLine : " ".repeat(lockLine.length), mainInner)}`),
                     // scrollable body — soft-wrapped, never wider than the pane

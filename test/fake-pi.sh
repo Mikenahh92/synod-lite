@@ -5,6 +5,10 @@ set -u
 PROMPT="$2"
 OUT=".dev-agents"
 MODE="${FAKE_PI_MODE:-pass}"
+DELAY="${FAKE_PI_DELAY:-0}"
+
+# staged progress: emit a line, sleep, so live tails show the agent "working"
+stage() { echo "$1"; [ "$DELAY" != "0" ] && sleep "$DELAY" || true; }
 
 mkdir -p "$OUT/specs" "$OUT/output"
 if [[ "$PROMPT" != *"synod-lite assistant"* ]]; then
@@ -18,15 +22,24 @@ if [[ "$PROMPT" == *"synod-lite assistant"* ]]; then
     echo 'ACTION: new "Chat-created story"'
   fi
 elif [[ "$PROMPT" == *"spec workflow"* ]]; then
+  stage "[agent] spec workflow: reading repo context"
+  stage "[agent] tool: read src/ + README"
+  stage "[agent] drafting spec"
   echo "# Spec (fake)" > "$OUT/specs/fake-feature.md"
   echo "## Gate decision — PASS" >> "$OUT/specs/fake-feature.md"
 elif [[ "$PROMPT" == *"test-design workflow"* ]]; then
+  stage "[agent] test-design: reading spec"
+  stage "[agent] designing test matrix"
   echo "# Test design (fake)" > "$OUT/specs/test-design-fake-feature.md"
 elif [[ "$PROMPT" == *"implement workflow"* ]]; then
+  stage "[agent] implement: reading spec + test design"
+  stage "[agent] tool: write src-fake.js"
   echo "// implemented" > src-fake.js 2>/dev/null || true
   echo "# Implement report (fake)" > "$OUT/output/implement-fake-feature.md"
   git add -A >/dev/null 2>&1 && git -c user.email=f@f -c user.name=fake commit -m "implement (fake)" >/dev/null 2>&1 || true
 elif [[ "$PROMPT" == *"review workflow"* ]]; then
+  stage "[agent] review: reading diff + spec"
+  stage "[agent] checking acceptance criteria"
   if [[ "$MODE" == "fail" ]]; then
     echo "# Review (fake)" > "$OUT/output/review-fake-feature.md"
     echo "## Gate decision — FAIL: AC1 not met" >> "$OUT/output/review-fake-feature.md"
