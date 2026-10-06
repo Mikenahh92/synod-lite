@@ -330,26 +330,29 @@ function App({ port }) {
                     ...win.map((l, i) => h(Text, { key: "b" + i, wrap: false, color: C.text }, ` ${l}`)),
                     h(Box, { flexGrow: 1 }),
                     h(Text, { color: C.dim, wrap: false }, ` ${clamped}/${all.length} lines`),
-                    // doc banner: ascii-framed tabs spread across the pane, ←→ changes selection
-                    h(Box, { flexDirection: "row", key: "banner" },
-                      (() => {
-                        const W = mainInner - 2;
-                        const n = detailView.docs.length;
-                        const slot = Math.floor(W / n);
-                        const parts = [h(Text, { color: C.border, wrap: false }, " ┤")];
-                        const lastLead = { v: 1 };
-                        detailView.docs.forEach((d, i) => {
-                          const sel = i === detailView.di;
-                          const label = sel ? `[${d.name}]` : d.name;
-                          const lead = Math.max(1, Math.floor((slot - label.length) / 2));
-                          if (i === n - 1) lastLead.v = lead; // carry pad to the closing ├ (leading spaces survive)
-                          parts.push(h(Text, { wrap: false, bold: sel,
-                            color: sel ? C.accent : C.dim }, " ".repeat(lead) + fit(label, slot - lead)));
-                          if (i < n - 1) parts.push(h(Text, { color: C.border, wrap: false }, "│"));
-                        });
-                        parts.push(h(Text, { color: C.border, wrap: false }, " ".repeat(lastLead.v) + "├"));
-                        return parts;
-                      })()),
+                    // doc banner: framed strip spanning the exact pane width
+                    // row 1: ├────┬────┤   row 2: │ slot │ slot ┤   (pane bottom border closes it)
+                    (() => {
+                      const W = mainInner;
+                      const n = detailView.docs.length;
+                      const sum = W - n - 1;                 // 1 leading │ + n-1 separators + 1 trailing ┤
+                      const w = [];                          // exact slot widths incl. remainder
+                      for (let i = 0; i < n; i++) w.push(Math.floor(sum / n) + (i < sum % n ? 1 : 0));
+                      const top = h(Text, { key: "bt", wrap: false, color: C.border },
+                        "├" + w.map(x => "─".repeat(x)).join("┬") + "┤");
+                      const row = [h(Text, { key: "bl", wrap: false, color: C.border }, "│")];
+                      detailView.docs.forEach((d, i) => {
+                        const sel = i === detailView.di;
+                        const label = sel ? `[${d.name}]` : d.name;
+                        const pad = Math.max(0, w[i] - label.length);
+                        const lead = Math.floor(pad / 2), trail = pad - lead;
+                        row.push(h(Text, { key: "s" + i, wrap: false, bold: sel,
+                          color: sel ? C.accent : C.dim }, " ".repeat(lead) + label));
+                        row.push(h(Text, { key: "p" + i, wrap: false, color: C.border },
+                          " ".repeat(trail) + (i < n - 1 ? "│" : "┤")));
+                      });
+                      return [top, h(Box, { flexDirection: "row", key: "bb" }, ...row)];
+                    })(),
                   ];
                 })()
               : h(Text, { color: C.dim }, " (no story)")),
