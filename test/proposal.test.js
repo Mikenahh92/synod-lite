@@ -76,9 +76,9 @@ test("proposal with nothing pending errors", async () => {
 test("app guide (wiki) is part of every chat prompt", async () => {
   const ctx = await rig();
   const p = buildChatPrompt(ctx, "how does this app work?", null);
-  assert.match(p, /app guide/);
-  assert.match(p, /Lifecycle: drafted/);
-  assert.match(p, /Human gates/);
-  assert.match(p, /TUI keys/);
+  assert.match(p, /<app_guide>/);
+  assert.match(p, /<lifecycle>drafted/);
+  assert.match(p, /<human_gates/);
+  assert.match(p, /<tui_keys/);
   assert.match(p, /ACTION: reset <id> --to/);
 });

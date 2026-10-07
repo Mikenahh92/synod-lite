@@ -281,38 +281,47 @@ const readNewestIn = (dir: string, prefix: string): string | null => {
 export function buildChatPrompt(ctx: Ctx, message: string, focus?: Story | null, doc?: string): string {
   const { store, cfg, repo } = ctx;
   const board = store.stories().map(s =>
-    `  ${s.id} ${JSON.stringify(s.title)} ${s.state} r${s.retries}` +
-    (s.lastReview ? ` review:${s.lastReview.verdict}` : "") + fmtRun(ctx.running?.get(s.id)));
+    `<story id="${s.id}" state="${s.state}" retries="${s.retries}"` +
+    (s.lastReview ? ` review="${s.lastReview.verdict}"` : "") +
+    (ctx.running?.get(s.id) ? ` running="${fmtRun(ctx.running.get(s.id)).trim()}"` : "") +
+    `>${JSON.stringify(s.title)}</story>`);
+  const cols = ctx.uiCols ?? 80;
+  const chatW = Math.max(20, Math.floor(cols * 0.36) - 6);
+  const docW = Math.max(cols - 8, 40);
   const out: string[] = [
-    "You are the synod-lite assistant, embedded in a story dashboard the operator is looking at.",
-    "── app guide (how this app works) ──",
-    "Lifecycle: drafted →(agent: spec)→ ready_for_user_review →[operator approves]→ in_development →(agent: test-design+implement)→ in_review →(agent: review)→ PASS → ready_for_merge →[operator merges]→ done.",
-    "Review FAIL → automatic re-develop with feedback, up to maxRetries, then blocked. failed/blocked can be retried; cancelled stories are gone.",
-    "One story = one git branch + worktree (story/s-00n). Merge = squash commit into the trunk branch.",
-    "Human gates (operator keys in the TUI): a approve spec · m merge · R reset to a phase (y-confirmed) · K kill (y-confirmed).",
-    "Your actions: new/retry/kill execute immediately (only when explicitly asked). A reset request becomes a PROPOSAL — the operator must confirm it with y in the dashboard; tell them a confirm bar appears.",
-    "TUI keys: ↑↓ select · ⏎ open story · ←→ document pages · f text filter · s status filter · n new · c chat · q quit. CLI mirrors all actions (new/list/show/approve/retry/reset/kill/merge/log).",
-    `Config: workers ${cfg.workers} (parallel agents) · maxRetries ${cfg.maxRetries} · auto ${cfg.auto} (spec: stops for approval; full: auto-merges) · trunk ${cfg.trunk}.`,
-    `Daemon: workers ${cfg.workers}, auto ${cfg.auto}, trunk ${cfg.trunk}.`,
-    "Current stories:",
+    "<role>You are the synod-lite assistant, embedded in a story dashboard the operator is looking at. Help the operator: explain states, monitor running agents (phase + elapsed are shown per story), summarise progress and reviews, advise next steps.</role>",
+    "",
+    "<app_guide>",
+    "<lifecycle>drafted →(agent: spec)→ ready_for_user_review →[operator approves]→ in_development →(agent: test-design+implement)→ in_review →(agent: review)→ PASS → ready_for_merge →[operator merges]→ done.</lifecycle>",
+    "<failure_handling>Review FAIL → automatic re-develop with feedback, up to maxRetries, then blocked. failed/blocked can be retried; cancelled stories are gone.</failure_handling>",
+    "<worktrees>One story = one git branch + worktree (story/s-00n). Merge = squash commit into the trunk branch.</worktrees>",
+    '<human_gates operator_keys="true">a approve spec · m merge · R reset to a phase (y-confirmed) · K kill (y-confirmed).</human_gates>',
+    "<your_actions>new/retry/kill execute immediately (only when explicitly asked). A reset request becomes a PROPOSAL — the operator must confirm it with y in the dashboard; tell them a confirm bar appears.</your_actions>",
+    "<tui_keys>↑↓ select · ⏎ open story · ←→ document pages · f text filter · s status filter · n new · c chat · q quit. CLI mirrors all actions (new/list/show/approve/retry/reset/kill/merge/log).</tui_keys>",
+    `<config workers="${cfg.workers}" max_retries="${cfg.maxRetries}" auto="${cfg.auto}" trunk="${cfg.trunk}"/>`,
+    "</app_guide>",
+    "",
+    "<format_constraints>",
+    `<terminal_columns>${cols}</terminal_columns>`,
+    `<chat_pane truncates_at="${chatW}">your chat replies render in a pane that TRUNCATES lines longer than ${chatW} columns — keep every line short.</chat_pane>`,
+    `<ascii_art chat_fits="${chatW}" doc_fits="${docW}">only draw ASCII art if every line fits within ${chatW} columns in chat; docs get ${docW} columns — otherwise describe it or put it in a doc.</ascii_art>`,
+    "</format_constraints>",
+    "",
+    "<board>",
     ...board,
-        (() => {
-      const cols = ctx.uiCols ?? 80;
-      const chatW = Math.max(20, Math.floor(cols * 0.36) - 6); // chat pane truncates lines wider than this
-      const docW = Math.min(cols - 8, 96);
-      return `Help the operator: explain states, monitor running agents (phase + elapsed are shown per story), summarise progress and reviews, advise next steps. The operator's terminal is ${cols} columns; your chat replies render in a pane that TRUNCATES lines longer than ${chatW} columns — keep every line short, and only draw ASCII art if every line fits within ${chatW} columns (otherwise describe it or put it in a doc; docs get ${docW} columns).`;
-    })(),
+    "</board>",
   ];
   if (focus) {
     const last = focus.log[focus.log.length - 1];
     out.push(
       "",
-      `The operator currently has story ${focus.id} (${focus.title}) in focus.`,
-      `  state ${focus.state}${fmtRun(ctx.running?.get(focus.id))} · retries ${focus.retries}`,
-      `  branch ${focus.branch} · created ${focus.createdAt}`,
-      focus.lastReview ? `  last review ${focus.lastReview.verdict} — ${focus.lastReview.file}` : "  no review yet",
-      ...(focus.error ? [`  error ${focus.error}`] : []),
-      `  phases so far: ${focus.log.map(l => l.phase).join(" → ") || "none yet"}`,
+      `<focus_story id="${focus.id}" state="${focus.state}" retries="${focus.retries}" running="${fmtRun(ctx.running?.get(focus.id)).trim()}">`,
+      `  ${JSON.stringify(focus.title)}`,
+      `  <branch>${focus.branch}</branch>`,
+      `  <created>${focus.createdAt}</created>`,
+      focus.lastReview ? `  <last_review verdict="${focus.lastReview.verdict}">${focus.lastReview.file}</last_review>` : "  <last_review>none yet</last_review>",
+      ...(focus.error ? [`  <error>${focus.error}</error>`] : []),
+      `  <phases>${focus.log.map(l => l.phase).join(" → ") || "none yet"}</phases>`,
     );
     let specEx: string | null = null;
     try {
@@ -320,12 +329,13 @@ export function buildChatPrompt(ctx: Ctx, message: string, focus?: Story | null,
       const f = fs.readdirSync(dir).filter(n => n.endsWith(".md") && !n.startsWith("test-design")).sort().pop();
       if (f) specEx = fs.readFileSync(path.join(dir, f), "utf8");
     } catch { /* no spec yet */ }
-    out.push(specEx ? "Its spec (excerpt):\n" + specEx.slice(0, 1600) + "\n" : "No spec authored yet.");
+    if (specEx) out.push('  <spec excerpt_only="true">\n' + specEx.slice(0, 1600) + '\n  </spec>');
+    else out.push("  <spec>none authored yet</spec>");
     const d = doc ?? "";
     if (d === "Test design" || d === "Review") {
       const [sub, prefix] = d === "Test design" ? ["specs", "test-design"] : ["output", "review-"];
       const txt = readNewestIn(path.join(repo, focus.worktree, ".dev-agents", sub), prefix);
-      if (txt) out.push(`\nThe operator is viewing the story's ${d} document:\n` + txt.slice(0, 2500) + "\n");
+      if (txt) out.push(`  <viewed_document type="${d}">\n` + txt.slice(0, 2500) + "\n  </viewed_document>");
     } else if (d === "Log") {
       let tail = "";
       if (last) {
@@ -334,22 +344,32 @@ export function buildChatPrompt(ctx: Ctx, message: string, focus?: Story | null,
           if (fs.existsSync(abs)) tail = fs.readFileSync(abs, "utf8").split("\n").slice(-30).join("\n");
         } catch { /* unreadable */ }
       }
-      out.push(`\nThe operator is viewing the live agent log (phase ${last?.phase ?? "none"}, last 30 lines):\n` + (tail.slice(0, 3000) || "(no log output yet)") + "\n");
+      out.push(`  <viewed_document type="live_log" phase="${last?.phase ?? "none"}" tail_lines="30">\n` + (tail.slice(0, 3000) || "(no log output yet)") + "\n  </viewed_document>");
     } else if (d === "Details") {
-      out.push("\nThe operator is on the Details page (fields listed above).\n");
+      out.push('  <viewed_document type="details">the operator is on the Details page (fields listed above)</viewed_document>');
     }
-    out.push(LOCKED_STATES.includes(focus.state)
-      ? "This story is past the spec stage: the spec is LOCKED. Do not propose spec edits; advise on progress, reviews, retries, or merging instead."
-      : "The spec is still editable (story not yet in development).");
+    out.push(
+      LOCKED_STATES.includes(focus.state)
+        ? "  <spec_lock>past the spec stage — the spec is LOCKED. Do not propose spec edits; advise on progress, reviews, retries, or merging instead.</spec_lock>"
+        : "  <spec_lock>not locked — story not yet in development, spec still editable</spec_lock>",
+      "</focus_story>",
+    );
   }
   out.push(
-    "You may end your reply with exactly ONE action line: ACTION: <command>",
-    "CRITICAL: only issue an ACTION when the operator explicitly asked you to do it. For questions or status checks, reply with advice only — never act unrequested.",
-    'Allowed actions: ACTION: new "<title>"  |  ACTION: retry <id>  |  ACTION: kill <id>  |  ACTION: reset <id> --to spec|develop|review|mergeable [--code] (becomes an operator-approved proposal)',
-    "approve and merge are human gates — NEVER issue them; tell the operator to press a/m instead.",
-    "Keep replies short; every line must fit its pane width (see above). No markdown fences.",
+    "",
+    "<rules>",
+    "  <rule>You may end your reply with exactly ONE action line: ACTION: <command></rule>",
+    '  <rule critical="true">Only issue an ACTION when the operator explicitly asked you to do it. For questions or status checks, reply with advice only — never act unrequested.</rule>',
+    "  <allowed_actions>",
+    '    ACTION: new "<title>"  |  ACTION: retry <id>  |  ACTION: kill <id>  |  ACTION: reset <id> --to spec|develop|review|mergeable [--code] (becomes an operator-approved proposal)',
+    "  </allowed_actions>",
+    "  <forbidden>approve and merge are human gates — NEVER issue them; tell the operator to press a/m instead.</forbidden>",
+    "  <style>Keep replies short; every line must fit its pane width (see format_constraints). No markdown fences.</style>",
+    "</rules>",
+    "",
+    "<operator_message>" + message + "</operator_message>",
   );
-  return out.join("\n") + "\n\nOperator: " + message;
+  return out.join("\n") + "\n";
 }
 
 export async function callDaemon<T = any>(port: number, action: string, id?: string, args?: Record<string, any>): Promise<T> {

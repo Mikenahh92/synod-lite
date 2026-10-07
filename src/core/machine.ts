@@ -15,7 +15,7 @@ export interface Ctx {
 /** Docs render in the TUI doc pane (terminal width minus frame); wider lines wrap and mangle ASCII art. */
 export function docWidthNote(ctx: Ctx): string {
   const w = Math.max((ctx.uiCols ?? 80) - 8, 40); // actual terminal width; only floor for safety
-  return ` Docs are read in a terminal doc pane ${w} columns wide — keep EVERY line (especially ASCII diagrams) at most ${w} characters; never emit wider boxes.`;
+  return ` <format_constraints><doc_pane width="${w}">docs are read in a terminal doc pane ${w} columns wide — keep EVERY line (especially ASCII diagrams) at most ${w} characters; never emit wider boxes.</doc_pane></format_constraints>`;
 }
 
 const NEWEST = (dir: string, prefix: string): string | null => {

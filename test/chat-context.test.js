@@ -52,27 +52,27 @@ const S1 = () => ctx.store.get("S-001");
 test("board snapshot: verdicts + live run status (monitoring)", () => {
   ctx.running.set("S-001", { startedAt: Date.now() - 65000, phase: "develop" });
   const p = buildChatPrompt(ctx, "status?", null);
-  assert.match(p, /S-001 .* review:FAIL \[running develop workflow, 1m0[0-9]s elapsed\]/);
-  assert.match(p, /Daemon: workers 2, auto spec, trunk main\./);
-  assert.match(p, /S-002 .*ready_for_user_review r0/);
+  assert.match(p, /<story id="S-001"[^>]*review="FAIL"[^>]*running="\[running develop workflow, 1m0[0-9]s elapsed\]"/);
+  assert.match(p, /<config workers="2"[^>]*auto="spec" trunk="main"\/>/);
+  assert.match(p, /<story id="S-002" state="ready_for_user_review" retries="0"/);
   ctx.running.delete("S-001");
 });
 
 test("focus Details block: branch, phases, error, review", () => {
   ctx.running.set("S-001", { startedAt: Date.now() - 65000, phase: "develop" });
   const p = buildChatPrompt(ctx, "hi", S1(), "Details");
-  assert.match(p, /state in_development \[running develop workflow/); // focus carries run info too
-  assert.match(p, /branch story\/s-001/);
-  assert.match(p, /phases so far: spec → test-design → implement/);
-  assert.match(p, /last review FAIL — review-feat\.md/);
-  assert.match(p, /on the Details page/);
-  assert.match(p, /spec is LOCKED/); // in_development → locked advice
+  assert.match(p, /<focus_story id="S-001" state="in_development"[^>]*running="\[running develop workflow/); // focus carries run info too
+  assert.match(p, /<branch>story\/s-001<\/branch>/);
+  assert.match(p, /<phases>spec → test-design → implement<\/phases>/);
+  assert.match(p, /<last_review verdict="FAIL">review-feat\.md<\/last_review>/);
+  assert.match(p, /<viewed_document type="details">/);
+  assert.match(p, /<spec_lock>past the spec stage/); // in_development → locked advice
 });
 
 test("focus failure state surfaces error text", async () => {
   await ctx.store.update("S-001", { state: "failed", error: "develop phase exited 1 (see logs)" });
   const p = buildChatPrompt(ctx, "hi", ctx.store.get("S-001"), undefined);
-  assert.match(p, /error develop phase exited 1/);
+  assert.match(p, /<error>develop phase exited 1 \(see logs\)<\/error>/);
   await ctx.store.update("S-001", { state: "in_development", error: undefined });
 });
 
@@ -81,13 +81,13 @@ test("doc pages inject the exact viewed document", () => {
   assert.match(buildChatPrompt(ctx, "hi", S1(), "Test design"), /# Test design\nCASE: trims spaces/);
   assert.match(buildChatPrompt(ctx, "hi", S1(), "Review"), /Gate decision — FAIL: AC1 not met/);
   const log = buildChatPrompt(ctx, "hi", S1(), "Log");
-  assert.match(log, /viewing the live agent log \(phase implement/);
+  assert.match(log, /<viewed_document type="live_log" phase="implement"/);
   assert.match(log, /implemented AC1/); // tail of newest log file
 });
 
 test("editable-spec advice for pre-development story", () => {
   const p = buildChatPrompt(ctx, "hi", ctx.store.get("S-002"), undefined);
-  assert.match(p, /spec is still editable/);
+  assert.match(p, /<spec_lock>not locked/);
 });
 
 test("action contract: whitelist + human gates, always", () => {
@@ -97,6 +97,6 @@ test("action contract: whitelist + human gates, always", () => {
     assert.match(p, /ACTION: retry <id>/);
     assert.match(p, /ACTION: kill <id>/);
     assert.match(p, /approve and merge are human gates/);
-    assert.match(p, /Operator: hi$/);
+    assert.match(p, /<operator_message>hi<\/operator_message>/);
   }
 });

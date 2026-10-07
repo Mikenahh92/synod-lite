@@ -35,19 +35,19 @@ async function rig() {
 }
 
 test("docWidthNote caps agent line width to the reported terminal", () => {
-  assert.match(docWidthNote({}), /72 columns/);           // default 80 - 8
-  assert.match(docWidthNote({ uiCols: 110 }), /102 columns/);  // actual TUI width
-  assert.match(docWidthNote({ uiCols: 10 }), /40 columns/);    // sane floor
+  assert.match(docWidthNote({}), /width="72"/);           // default 80 - 8
+  assert.match(docWidthNote({ uiCols: 110 }), /width="102"/);  // actual TUI width
+  assert.match(docWidthNote({ uiCols: 10 }), /width="40"/);    // sane floor
 });
 
 test("chat prompt tells the agent real pane widths", async () => {
   const ctx = await rig();
   const p80 = buildChatPrompt(ctx, "hi");
-  assert.match(p80, /terminal is 80 columns/);
+  assert.match(p80, /<terminal_columns>80<\/terminal_columns>/);
   assert.match(p80, /TRUNCATES lines longer than 22 columns/);   // floor(80*.36)-6
   ctx.uiCols = 110;
   const p110 = buildChatPrompt(ctx, "hi");
-  assert.match(p110, /terminal is 110 columns/);
+  assert.match(p110, /<terminal_columns>110<\/terminal_columns>/);
   assert.match(p110, /TRUNCATES lines longer than 33 columns/);
 });
 
