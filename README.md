@@ -30,6 +30,10 @@ Each story gets its own branch + worktree, so specialists work in parallel witho
 
 ## Install
 
+See [INSTALL.md](INSTALL.md) for the full guide (prerequisites, configuration, first run, troubleshooting).
+
+Quick start:
+
 Node ≥ 22 (24 recommended), in a repo with dev-agents installed:
 
 ```bash
