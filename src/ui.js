@@ -465,7 +465,7 @@ function App({ port }) {
         : null),
     h(Box, { height: 1 },
       composer
-        ? h(Text, { color: C.accent, wrap: false }, ` ${composer.kind} ▸ ${composer.buf}▌`)
+        ? h(Text, { color: C.accent, wrap: false }, ` ${composer.kind} ▸ ${composer.buf}▌${composer.kind === "reset" ? "   (spec|develop|review|mergeable, + code)" : ""}`)
         : h(Text, { color: msg.startsWith("✗") ? C.red : C.green, wrap: false }, ` ${fit(msg, cols - 2)}`)),
     h(Box, { height: 1 },
       confirm
