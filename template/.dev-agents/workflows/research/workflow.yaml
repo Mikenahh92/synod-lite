@@ -1,0 +1,11 @@
+name: research
+description: "Grounded exploration: how current implementation works, or think through a new feature."
+agent: planner
+inputs:
+  - "topic or question"
+outputs:
+  - "{specs_folder}/research/research-{date}.md"
+config_source: "{project-root}/.dev-agents/config.yaml"
+installed_path: "{project-root}/.dev-agents/workflows/research"
+instructions: "{installed_path}/instructions.md"
+default_output_file: "{specs_folder}/research/research-{{date}}.md"

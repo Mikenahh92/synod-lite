@@ -1,0 +1,11 @@
+name: feature
+description: "Conversational planning for a multi-spec feature: goals, UX, architecture impact, and decomposition into ordered spec slices."
+agent: planner
+inputs:
+  - "feature request description"
+  - "user answers to interview questions"
+outputs:
+  - "{specs_folder}/features/<slug>.md"
+config_source: "{project-root}/.dev-agents/config.yaml"
+installed_path: "{project-root}/.dev-agents/workflows/feature"
+instructions: "{installed_path}/instructions.md"

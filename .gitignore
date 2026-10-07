@@ -1,3 +1,4 @@
 node_modules/
 .pitboss/
 *.log
+.synod-lite/

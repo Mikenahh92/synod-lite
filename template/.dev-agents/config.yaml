@@ -1,0 +1,6 @@
+# dev-agents configuration (resolved by agents/workflows at activation)
+user_name:            # optional, used in greetings/outputs
+communication_language: English
+output_folder: .dev-agents/output   # state: context docs (index, tech-stack, code-standards), implementation reports
+specs_folder:  .dev-agents/specs    # specs, test designs, research (may be git-tracked per repo choice)
+docs_folder:   .dev-agents/docs     # durable project docs: prd, core-architecture, style-guide (git-track these)

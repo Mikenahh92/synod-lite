@@ -34,10 +34,12 @@ See [INSTALL.md](INSTALL.md) for the full guide (prerequisites, configuration, f
 
 Quick start:
 
-Node ≥ 22 (24 recommended), in a repo with dev-agents installed:
+Node ≥ 22 (24 recommended) + pi on PATH. Fully standalone — the dev-agents library (3 agents, 6 workflows) is vendored in `template/`:
 
 ```bash
-cp .synod-lite.example.json .synod-lite.json   # edit: piBin, provider, model
+cd /path/to/your-project
+synod-lite init     # scaffold dev-agents workflows + .synod-lite.json into THIS repo
+                    # edit: .synod-lite.json (piBin, provider, model) + .dev-agents/config.yaml
 synod-lite start    # background daemon (advances stories, up to `workers` concurrent)
 synod-lite ui       # TUI dashboard (starts daemon if needed)
 ```

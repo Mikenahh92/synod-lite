@@ -1,0 +1,11 @@
+name: spec
+description: "Draft a detailed feature spec: problem, requirements, verifiable acceptance criteria, test expectations — with a mandatory validation gate."
+agent: planner
+inputs:
+  - "feature name or topic description"
+outputs:
+  - "{specs_folder}/<feature>.md"
+config_source: "{project-root}/.dev-agents/config.yaml"
+installed_path: "{project-root}/.dev-agents/workflows/spec"
+instructions: "{installed_path}/instructions.md"
+default_output_file: "{specs_folder}/spec.md"

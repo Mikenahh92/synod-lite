@@ -1,0 +1,10 @@
+name: review
+description: "Review a diff against the spec: run tests, trace every acceptance criterion, PASS/FAIL gate decision."
+agent: tester
+inputs:
+  - "spec path + diff/PR scope (defaults: newest spec, uncommitted changes)"
+outputs:
+  - "review verdict appended to {output_folder}/implement-<feature>.md"
+config_source: "{project-root}/.dev-agents/config.yaml"
+installed_path: "{project-root}/.dev-agents/workflows/review"
+instructions: "{installed_path}/instructions.md"

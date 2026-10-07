@@ -1,0 +1,11 @@
+name: implement
+description: "Implement a validated spec: gather context, code + tests in requirement order, report per acceptance criterion."
+agent: developer
+inputs:
+  - "spec path (default: newest spec in {specs_folder})"
+outputs:
+  - "code and test changes in the repo"
+  - "{output_folder}/implement-<feature>.md"
+config_source: "{project-root}/.dev-agents/config.yaml"
+installed_path: "{project-root}/.dev-agents/workflows/implement"
+instructions: "{installed_path}/instructions.md"

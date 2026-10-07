@@ -9,8 +9,9 @@ synod-lite is a story harness around [pi](https://github.com/earendil-works/pi) 
 | **Node ≥ 22** (24 recommended) | runs the TypeScript sources directly via native type-stripping — no build step |
 | **git** | stories live in branches + worktrees of your project repo |
 | **pi** (`earendil-works/pi`) on PATH | the agent runner; see its README for install + provider setup |
-| **A dev-agents workflow** in your project repo | `.dev-agents/` with the spec / test-design / implement / review workflows pi should run |
 | **An LLM provider** reachable by pi | local (Ollama, LM Studio, …) or any OpenAI-compatible endpoint |
+
+The dev-agents library (planner/developer/tester agents, 6 workflows, gated workflow engine) is **vendored in this repo** (`template/`) — nothing else to install. Prune it with `synod-lite init` if you already have your own `.dev-agents` (existing `config.yaml` is never overwritten).
 
 > Air-gapped? `provider: "local"` + a local model works fully offline — synod-lite makes no network calls itself; only pi talks to the model.
 
@@ -34,12 +35,14 @@ synod-lite --help      # command overview
 
 ## Configure your project
 
-Run synod-lite *from inside* a git repo that has your dev-agents workflows. Copy the example config and edit it:
+From inside your project repo, scaffold everything (dev-agents workflows, agents, `AGENTS.md`, pi/codex prompts, `.synod-lite.json`):
 
 ```bash
 cd /path/to/your-project
-cp /path/to/synod-lite/.synod-lite.example.json .synod-lite.json
+synod-lite init
 ```
+
+`init` is idempotent — safe to re-run after upgrading synod-lite; your `.dev-agents/config.yaml` and `.synod-lite.json` are preserved. Then edit:
 
 `.synod-lite.json` — every field optional, these are the defaults:
 

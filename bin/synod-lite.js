@@ -9,6 +9,8 @@ import { handleAction } from "../src/daemon.ts";
 const HELP = `synod-lite — story harness for pi + dev-agents
 
 Usage: synod-lite <command> [args]
+  init                 scaffold dev-agents workflows + config into the CURRENT repo
+                       (agents, 6 workflows, AGENTS.md, .pi/.codex prompts, .synod-lite.json)
   new "<title>"        create a story (worktree + branch), spec starts automatically (daemon)
   list                 overview of all stories
   show <id>            story details (state, retries, last review, logs)
@@ -65,8 +67,48 @@ function tail(fileAbs, n = 40) {
   return fs.readFileSync(fileAbs, "utf8").split("\n").slice(-n).join("\n");
 }
 
+import { fileURLToPath } from "node:url";
+
+const TEMPLATE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "template");
+
+function copyTree(from, to) {
+  fs.mkdirSync(to, { recursive: true });
+  for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+    if (e.isDirectory()) copyTree(path.join(from, e.name), path.join(to, e.name));
+    else fs.copyFileSync(path.join(from, e.name), path.join(to, e.name));
+  }
+}
+
+function cmdInit(target = process.cwd()) {
+  const t = (n) => path.join(TEMPLATE_DIR, n);
+  fs.mkdirSync(path.join(target, ".dev-agents"), { recursive: true });
+  // never clobber user config
+  const cfgPath = path.join(target, ".dev-agents", "config.yaml");
+  if (fs.existsSync(cfgPath)) console.log("keeping existing .dev-agents/config.yaml");
+  else fs.copyFileSync(t(".dev-agents/config.yaml"), cfgPath);
+  for (const d of ["agents", "core", "workflows"]) copyTree(t(`.dev-agents/${d}`), path.join(target, ".dev-agents", d));
+  fs.rmSync(path.join(target, ".dev-agents/core/tasks/workflow-yolo.xml"), { force: true }); // stale engine
+  copyTree(t(".pi"), path.join(target, ".pi"));
+  copyTree(t(".codex"), path.join(target, ".codex"));
+  fs.copyFileSync(t("AGENTS.md"), path.join(target, "AGENTS.md"));
+  // gitignore agent output
+  const gi = path.join(target, ".gitignore");
+  const giTxt = fs.existsSync(gi) ? fs.readFileSync(gi, "utf8") : "";
+  if (!/^\.dev-agents\/output\/$/m.test(giTxt))
+    fs.writeFileSync(gi, giTxt + (giTxt.endsWith("\n") || !giTxt ? "" : "\n") + ".dev-agents/output/\n");
+  // harness config
+  const sl = path.join(target, ".synod-lite.json");
+  if (!fs.existsSync(sl)) {
+    fs.copyFileSync(path.join(TEMPLATE_DIR, "..", ".synod-lite.example.json"), sl);
+    console.log("created .synod-lite.json (edit: piBin, provider, model)");
+  } else console.log("keeping existing .synod-lite.json");
+  console.log(`scaffolded dev-agents into ${target}`);
+  console.log("next: edit .dev-agents/config.yaml (user_name, language) → synod-lite start");
+}
+
 async function main() {
   if (!cmd || cmd === "help" || cmd === "--help") { console.log(HELP); return; }
+  if (cmd === "init") { cmdInit(rest[0]); return; }
   const { repo, cfg, store } = await ctx();
 
   const action = async (name, id, args = {}) =>

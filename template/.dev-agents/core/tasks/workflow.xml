@@ -1,0 +1,62 @@
+<task id="{agents_folder}/core/tasks/workflow.xml" name="Execute Workflow">
+  <objective>Execute a workflow headlessly: no user prompts, no approval gates. This is the DEFAULT mode. Use workflow-gated.xml instead when #ask is active.</objective>
+
+  <llm critical="true">
+    <mandate>Read workflow-related files COMPLETELY; never use offset/limit</mandate>
+    <mandate>Execute all instruction steps in exact numerical order</mandate>
+    <mandate>Save the template output file after EVERY template-output tag</mandate>
+    <mandate>Never delegate a step; you execute every step yourself</mandate>
+  </llm>
+
+  <rules critical="true">
+    <rule n="1">Steps run in exact order (1, 2, 3...)</rule>
+    <rule n="2">Never ask the user anything; always proceed</rule>
+    <rule n="3">template-output: save content and continue automatically (gates auto-approved)</rule>
+    <rule n="4">Missing info: research the repository to infer it; else make explicit, safe assumptions and record them in the output; never proceed with destructive or unsafe actions</rule>
+    <rule n="5">Propagate headless mode: invoke-workflow calls also run with this engine</rule>
+    <rule n="6">Factual integrity: never assert environment facts (dates, git state, command outcomes, CI results) without having run the command this session. Dates in filenames/headers MUST come from the `date` command run in step 1 — never from memory. Unverifiable claims must be written as "not verified".</rule>
+  </rules>
+
+  <flow>
+    <step n="1" title="Initialize">
+      <action>Read the workflow.yaml; load config_source; resolve all {config_source}:key references</action>
+      <action>Resolve {project-root}, {installed_path}, {agents_folder} and other {{variables}} by repo research; record assumptions</action>
+      <action critical="true">Run a `date +%F` command NOW and store the exact output as {{date}}. EVERY date used in any output (filenames, headers, report metadata) MUST come from this command output. Never write a date from memory or training data.</action>
+      <action>Read the instructions file completely; read the template file if present</action>
+      <action>If template: false this is an action-workflow; else write the template (with placeholders) to default_output_file, creating directories as needed</action>
+    </step>
+
+    <step n="2" title="Execute instructions">
+      <iterate>For each instruction step, in order:</iterate>
+      <action>Handle attributes: optional="true" (include unless destructive), if="condition", for-each="collection", repeat="n"</action>
+      <action>Perform the step content; substitute {{variables}}</action>
+      <tags>
+        <tag>action → do it</tag>
+        <tag>check if="..." → conditional block</tag>
+        <tag>ask → infer the answer from repo/docs research; else pick a safe default and record the assumption</tag>
+        <tag>invoke-workflow → run another workflow.yaml with this same engine</tag>
+        <tag>goto step="x" → jump</tag>
+        <tag>template-output → save section to output file and continue automatically</tag>
+      </tags>
+    </step>
+
+    <step n="3" title="Complete">
+      <action>If a checklist exists, run it</action>
+      <action>Confirm output saved to the resolved output path (or actions completed for action-workflows)</action>
+      <action>Report completion, listing every assumption made</action>
+    </step>
+  </flow>
+
+  <input-discovery>
+    <note>When instructions reference content variables like {spec_content} or {test_design_content}, resolve them before use:</note>
+    <action>Glob the pattern from input_file_patterns in workflow.yaml (whole first, then sharded globs)</action>
+    <action>Load matched files completely; store concatenated content in the variable</action>
+    <action>Missing pattern → set variable empty and note it (not an error)</action>
+    <action>Report which variables loaded and from how many files</action>
+  </input-discovery>
+
+  <modes>
+    <mode name="default">Headless: no prompts, gates auto-approved, assumptions recorded. Use for CLI, scripts, CI.</mode>
+    <mode name="#ask">Interactive: switch to workflow-gated.xml — full confirmation gates at every decision point.</mode>
+  </modes>
+</task>

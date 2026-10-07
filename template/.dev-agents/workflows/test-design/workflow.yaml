@@ -1,0 +1,11 @@
+name: test-design
+description: "Risk-driven test design mapped to the spec's acceptance criteria."
+agent: planner
+inputs:
+  - "spec path (default: newest spec in {specs_folder})"
+outputs:
+  - "{specs_folder}/test-design-<feature>.md"
+config_source: "{project-root}/.dev-agents/config.yaml"
+installed_path: "{project-root}/.dev-agents/workflows/test-design"
+instructions: "{installed_path}/instructions.md"
+default_output_file: "{specs_folder}/test-design-{{date}}.md"

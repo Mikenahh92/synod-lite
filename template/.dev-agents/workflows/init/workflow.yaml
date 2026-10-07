@@ -1,0 +1,13 @@
+name: init
+description: "Conversational bootstrap: interview the user, survey the repo, author prd, core-architecture, and style-guide docs."
+agent: planner
+inputs:
+  - "repository root"
+  - "user answers to interview questions"
+outputs:
+  - "{docs_folder}/prd.md"
+  - "{docs_folder}/core-architecture.md"
+  - "{docs_folder}/style-guide.md"
+config_source: "{project-root}/.dev-agents/config.yaml"
+installed_path: "{project-root}/.dev-agents/workflows/init"
+instructions: "{installed_path}/instructions.md"
