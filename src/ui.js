@@ -44,6 +44,12 @@ function fetchState(port) {
   return fetch(`http://127.0.0.1:${port}/state`).then(r => r.json());
 }
 
+// tell the daemon how wide the terminal is — agents size ASCII art to fit
+function reportCols(port, stdout) {
+  const cols = stdout?.columns ?? process.stdout.columns;
+  if (cols) fetch(`http://127.0.0.1:${port}/ui`, { method: "POST", body: JSON.stringify({ cols }) }).catch(() => {});
+}
+
 function App({ port }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -73,7 +79,10 @@ function App({ port }) {
       }
     }).catch(() => {}), 1000);
     fetchState(port).then(setState).catch(() => {});
-    return () => clearInterval(iv);
+    reportCols(port, stdout);
+    const onResize = () => reportCols(port, stdout);
+    stdout?.on?.("resize", onResize);
+    return () => { clearInterval(iv); stdout?.off?.("resize", onResize); };
   }, [port]);
 
   // spinner: braille frames (single-cell, row-safe); ticks re-render so elapsed stays live
@@ -406,7 +415,12 @@ function App({ port }) {
               ? (() => {
                   const st = storiesAll.find(x => x.id === detailView.id);
                   const docH = paneH - 8;
-                  const all = detailLines(detailView).flatMap(l => softWrap(l, mainInner - 2));
+                  const docW = mainInner - 2;
+                  const isArt = l => ((l || "").match(/[\u2500-\u257F\u2550-\u256C]/g) || []).length >= 3;
+                  // ASCII-art lines: clip (diagram stays readable, right edge hidden) instead of
+                  // soft-wrapping, which shreds box drawings into garbage continuation rows
+                  const all = detailLines(detailView).flatMap(l =>
+                    isArt(l) && l.length > docW ? [l.slice(0, Math.max(0, docW - 1)) + "…"] : softWrap(l, docW));
                   const clamped = Math.min(detailView.scroll, Math.max(0, all.length - docH));
                   const win = all.slice(clamped, clamped + docH);
                   const doc = detailView.docs[detailView.di];

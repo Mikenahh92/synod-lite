@@ -9,6 +9,13 @@ export interface Ctx {
   repo: string; cfg: PitbossConfig; store: Store;
   running?: Map<string, { startedAt: number; phase: string }>;
   pending?: { action: string; id?: string; args: Record<string, any>; at: number };
+  uiCols?: number; // terminal width reported by the TUI (default 80 when headless)
+}
+
+/** Docs render in the TUI doc pane (terminal width minus frame); wider lines wrap and mangle ASCII art. */
+export function docWidthNote(ctx: Ctx): string {
+  const w = Math.max((ctx.uiCols ?? 80) - 8, 40); // actual terminal width; only floor for safety
+  return ` Docs are read in a terminal doc pane ${w} columns wide — keep EVERY line (especially ASCII diagrams) at most ${w} characters; never emit wider boxes.`;
 }
 
 const NEWEST = (dir: string, prefix: string): string | null => {
@@ -59,7 +66,7 @@ export async function advance(ctx: Ctx, storyId: string, force?: "merge"): Promi
   switch (s.state) {
     case "drafted": {
       await ctx.store.update(s.id, { state: "refining" });
-      const code = await phase(ctx, s, "spec", `run the spec workflow for: ${s.title}`);
+      const code = await phase(ctx, s, "spec", `run the spec workflow for: ${s.title} + docWidthNote(ctx)`);
       s = ctx.store.get(s.id)!;
       const spec = newestSpec(ctx, s);
       if (code === 0 && spec) {
@@ -76,13 +83,13 @@ export async function advance(ctx: Ctx, storyId: string, force?: "merge"): Promi
       s = ctx.store.get(s.id)!;
       const spec = newestSpec(ctx, s);
       const slug = spec ? baseName(spec) : "";
-      const td = await phase(ctx, s, "test-design", `run the test-design workflow for ${spec ? `.dev-agents/specs/${path.basename(spec)}` : "the newest spec"}`);
+      const td = await phase(ctx, s, "test-design", `run the test-design workflow for ${spec ? `.dev-agents/specs/${path.basename(spec)}` : "the newest spec"} + docWidthNote(ctx)`);
       let code = td;
       if (td === 0) {
         const feedback = s.retries > 0 && s.lastReview?.verdict === "FAIL"
           ? ` The previous review FAILED — fix per .dev-agents/output/${s.lastReview.file}; this is retry ${s.retries}.`
           : "";
-        code = await phase(ctx, s, "implement", `run the implement workflow for ${spec ? `.dev-agents/specs/${path.basename(spec)}` : "the newest spec"}.${feedback}`);
+        code = await phase(ctx, s, "implement", `run the implement workflow for ${spec ? `.dev-agents/specs/${path.basename(spec)}` : "the newest spec"}.${feedback} + docWidthNote(ctx)`);
       }
       s = ctx.store.get(s.id)!;
       if (code === 0) {
@@ -94,7 +101,7 @@ export async function advance(ctx: Ctx, storyId: string, force?: "merge"): Promi
     }
 
     case "in_review": {
-      const code = await phase(ctx, s, "review", `run the review workflow for the newest spec`);
+      const code = await phase(ctx, s, "review", `run the review workflow for the newest spec + docWidthNote(ctx)`);
       s = ctx.store.get(s.id)!;
       const reviewFile = NEWEST(path.join(wt, ".dev-agents", "output"), "review-");
       if (code !== 0 || !reviewFile) {

@@ -47,6 +47,7 @@ export function startDaemon(repoRoot: string, cfg: PitbossConfig): Promise<Daemo
         runningIds: [...running.keys()],
         runs: Object.fromEntries(running),
         config: { workers: cfg.workers, maxRetries: cfg.maxRetries, auto: cfg.auto, trunk: cfg.trunk },
+        uiCols: (ctx as Ctx).uiCols ?? null,
         pendingProposal: (ctx as Ctx).pending ?? null,
         tails: Object.fromEntries(stories.map(s => {
           const last = s.log[s.log.length - 1];
@@ -57,6 +58,20 @@ export function startDaemon(repoRoot: string, cfg: PitbossConfig): Promise<Daemo
           return [s.id, lines.slice(-40).join("\n")];
         })),
       }));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/ui") {
+      let body = "";
+      req.on("data", c => body += c);
+      req.on("end", () => {
+        try {
+          const cols = Number(JSON.parse(body || "{}").cols);
+          if (Number.isFinite(cols) && cols >= 40 && cols <= 500) (ctx as Ctx).uiCols = Math.floor(cols);
+          res.end(JSON.stringify({ ok: true, uiCols: (ctx as Ctx).uiCols }));
+        } catch (e: any) {
+          res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: e.message }));
+        }
+      });
       return;
     }
     if (req.method === "POST" && url.pathname === "/stop") {
@@ -281,7 +296,12 @@ export function buildChatPrompt(ctx: Ctx, message: string, focus?: Story | null,
     `Daemon: workers ${cfg.workers}, auto ${cfg.auto}, trunk ${cfg.trunk}.`,
     "Current stories:",
     ...board,
-    "Help the operator: explain states, monitor running agents (phase + elapsed are shown per story), summarise progress and reviews, advise next steps. When a diagram or graph would help, render it as ASCII art (monospace-safe).",
+        (() => {
+      const cols = ctx.uiCols ?? 80;
+      const chatW = Math.max(20, Math.floor(cols * 0.36) - 6); // chat pane truncates lines wider than this
+      const docW = Math.min(cols - 8, 96);
+      return `Help the operator: explain states, monitor running agents (phase + elapsed are shown per story), summarise progress and reviews, advise next steps. The operator's terminal is ${cols} columns; your chat replies render in a pane that TRUNCATES lines longer than ${chatW} columns — keep every line short, and only draw ASCII art if every line fits within ${chatW} columns (otherwise describe it or put it in a doc; docs get ${docW} columns).`;
+    })(),
   ];
   if (focus) {
     const last = focus.log[focus.log.length - 1];
@@ -327,7 +347,7 @@ export function buildChatPrompt(ctx: Ctx, message: string, focus?: Story | null,
     "CRITICAL: only issue an ACTION when the operator explicitly asked you to do it. For questions or status checks, reply with advice only — never act unrequested.",
     'Allowed actions: ACTION: new "<title>"  |  ACTION: retry <id>  |  ACTION: kill <id>  |  ACTION: reset <id> --to spec|develop|review|mergeable [--code] (becomes an operator-approved proposal)',
     "approve and merge are human gates — NEVER issue them; tell the operator to press a/m instead.",
-    "Keep replies short (terminal column width). No markdown fences.",
+    "Keep replies short; every line must fit its pane width (see above). No markdown fences.",
   );
   return out.join("\n") + "\n\nOperator: " + message;
 }
