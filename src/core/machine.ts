@@ -122,6 +122,7 @@ export async function advance(ctx: Ctx, storyId: string, force?: "merge"): Promi
         await ctx.store.update(s.id, { state: "done", error: undefined });
       } catch (e: any) {
         await ctx.store.update(s.id, { state: "failed", error: `merge failed: ${e.message}` });
+        throw new Error(`merge failed for ${s.id}: ${e.message}`); // surface to caller (CLI/TUI) — no silent ✓
       }
       return ctx.store.get(s.id)!;
     }

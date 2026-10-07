@@ -218,7 +218,7 @@ export async function handleAction(ctx: Ctx, action: string, id?: string, args: 
     }
     case "merge": {
       const s = mustGet(store, id!);
-      if (s.state !== "ready_for_merge") throw new Error(`${s.id} is '${s.state}', expected done`);
+      if (s.state !== "ready_for_merge") throw new Error(`${s.id} is '${s.state}', expected ready_for_merge`);
       return advance(ctx, s.id, "merge"); // executes merge path
     }
     case "step": {

@@ -80,14 +80,27 @@ function App({ port }) {
       : filter.status === "active" ? !["done", "cancelled"].includes(s.state)
       : s.state === filter.status))
     .filter(s => !filter.text || `${s.id} ${s.title}`.toLowerCase().includes(filter.text.toLowerCase()));
-  const cur = filtered[Math.min(sel, filtered.length - 1)] ?? storiesAll[0];
+  // scoped to the FILTERED list only — an empty filter must never let an
+  // action fall through to a hidden story (P1 #1)
+  const cur = filtered.length ? filtered[Math.min(sel, filtered.length - 1)] : undefined;
 
   const act = useCallback(async (action, args = {}) => {
-    if (!cur && action !== "new") return;
+    if (!cur && action !== "new") {
+      setMsg("✗ no story selected (filter has no matches) — esc to clear");
+      setTimeout(() => setMsg(""), 4000);
+      return;
+    }
     try {
-      await callDaemon(port, action, action === "new" ? undefined : cur.id, args);
-      setMsg(`${action} ${action === "new" ? "" : cur.id} ✓`);
-      setTimeout(() => setMsg(""), 2500);
+      const r = await callDaemon(port, action, action === "new" ? undefined : cur.id, args);
+      // outcome notification (P1 #4): merge failures are recorded as
+      // state=failed without throwing — never show a blind ✓
+      if (r && r.state === "failed") {
+        setMsg(`✗ ${action} ${action === "new" ? "" : cur.id} — ${r.error ?? "story failed"}`);
+        setTimeout(() => setMsg(""), 5000);
+      } else {
+        setMsg(`${action} ${action === "new" ? "" : cur.id} ✓${r && r.state ? ` → ${r.state}` : ""}`);
+        setTimeout(() => setMsg(""), 2500);
+      }
     } catch (e) { setMsg(`✗ ${e.message}`); setTimeout(() => setMsg(""), 4000); }
   }, [cur, port]);
 
@@ -125,13 +138,20 @@ function App({ port }) {
     } catch (e) { setMsg(`✗ ${e.message}`); setTimeout(() => setMsg(""), 4000); }
   }, [port]);
 
+  // printable input incl. multi-char paste (P1 #2): real clipboard paste
+  // arrives as one long `ch` — strip control chars, accept any length
+  const pasteOf = (ch, key) =>
+    (ch && !key.ctrl && !key.meta && !key.return && !key.escape && !key.backspace && !key.delete
+      ? ch.replace(/[\x00-\x1f\x7f]/g, "") : "");
+
   useInput((ch, key) => {
     // ── chat open: every printable key goes to the chat buffer ──
     if (chat && !composer) {
       if (key.escape) { setChat(null); return; }
       if (key.return) { const t = (chat.draft ?? "").trim(); if (t) { setChat({ ...chat, draft: "" }); sendChat(t); } return; }
       if (key.backspace || key.delete) { setChat({ ...chat, draft: (chat.draft ?? "").slice(0, -1) }); return; }
-      if (ch && ch.length === 1 && !key.ctrl && !key.meta) { setChat({ ...chat, draft: (chat.draft ?? "") + ch }); return; }
+      const paste = pasteOf(ch, key);
+      if (paste) { setChat({ ...chat, draft: (chat.draft ?? "") + paste }); return; }
       return;
     }
     // ── composer (new story / list filter) ────────────────────
@@ -146,7 +166,8 @@ function App({ port }) {
         return;
       }
       if (key.backspace || key.delete) { setComposer({ ...composer, buf: composer.buf.slice(0, -1) }); return; }
-      if (ch && ch.length === 1 && !key.ctrl && !key.meta) { setComposer({ ...composer, buf: (composer.buf + ch).slice(0, 80) }); return; }
+      const paste = pasteOf(ch, key);
+      if (paste) { setComposer({ ...composer, buf: (composer.buf + paste).slice(0, 80) }); return; }
       return;
     }
     if (key.escape) {
@@ -286,16 +307,35 @@ function App({ port }) {
   // helper for scroll clamping (detailView.lines referenced in useInput)
   detailView && (detailView.lines = detailLines);
 
-  const hints = composer
-    ? `${composer.kind} ▸ ${composer.buf}▌   ⏎ apply · esc cancel`
+  // structured hint segments (P1 #3): explicit accent/dim pairs — no regex
+  // splitting of a flat string, so nothing can mangle the wording
+  const K2 = (t) => [t, true], D2 = (t) => [t, false];
+  const hintSegments = composer
+    ? [D2(`${composer.kind} ▸ ${composer.buf}▌   `), K2("⏎ apply"), D2(" · "), K2("esc cancel")]
     : chat
-    ? "type message · ⏎ send · esc close chat"
+    ? [D2("type message · "), K2("⏎ send"), D2(" · "), K2("esc close chat")]
     : mode === "detail"
-    ? "←→ document · ↑↓ scroll · esc back · c chat · q quit"
-    : `↑↓ move · ⏎ open story · f filter · s status${filterInfo ? " · esc clear" : ""} · n new · a approve · r retry · m merge · K kill · c chat · q quit`;
-
-  const Hint = () => hints.split(/(⏎|esc|←→|↑↓|c |f |s |n |a |r |m |K )/g).filter(Boolean).map((p, i) =>
-    /^[a-zA-Z⏎←↑]|esc/.test(p) && p.length <= 3 ? h(Text, { key: i, color: C.accent }, p) : h(Text, { key: i, color: C.dim }, p));
+    ? [K2("←→ document"), D2(" · "), K2("↑↓ scroll"), D2(" · "), K2("esc back"), D2(" · "), K2("c chat"), D2(" · "), K2("q quit")]
+    : [K2("↑↓ move"), D2(" · "), K2("⏎ open story"), D2(" · "), K2("f filter"), D2(" · "), K2("s status"),
+       ...(filterInfo ? [D2(" · "), K2("esc clear")] : []),
+       D2(" · "), K2("n new"), D2(" · "), K2("a approve"), D2(" · "), K2("r retry"), D2(" · "), K2("m merge"),
+       D2(" · "), K2("K kill"), D2(" · "), K2("c chat"), D2(" · "), K2("q quit")];
+  const Hint = () => {
+    // budget-aware render: truncate at SEGMENT boundaries with an ellipsis —
+    // never mid-key (P2: 110-col terminals cut "f filter" into "f filte")
+    const budget = cols - 2;
+    const parts = [];
+    let used = 1; // leading space
+    for (const [t, accent] of hintSegments) {
+      if (used + t.length > budget) {
+        if (used + 1 <= budget) parts.push(h(Text, { key: "ell", color: C.dim, wrap: false }, "…"));
+        break;
+      }
+      used += t.length;
+      parts.push(h(Text, { key: parts.length, color: accent ? C.accent : C.dim, wrap: false }, t));
+    }
+    return h(Box, { height: 1 }, ...parts);
+  };
 
   const titleRight = `${state.runningIds.length}/${storiesAll.length} stories · port ${port} `;
 
@@ -323,6 +363,11 @@ function App({ port }) {
               filterInfo ? h(Text, { color: C.yellow, wrap: false }, fit(filterInfo, mainInner - 14)) : null),
             start > 0 ? h(Text, { color: C.dim, wrap: false }, ` ↑ ${start} more`) : null,
             ...visible.flatMap(line),
+            // empty-state guidance: never a blank pane
+            filtered.length === 0 ? h(Text, { color: C.dim, wrap: false },
+              storiesAll.length === 0
+                ? " no stories yet — press n to create one"
+                : " no matches for this filter — esc to clear") : null,
             (start + listH < filtered.length) ? h(Text, { color: C.dim, wrap: false }, ` ↓ ${filtered.length - start - listH} more`) : null,
             h(Box, { flexGrow: 1 }),
             h(Text, { color: C.dim }, ` ${state.runningIds.length} running · workers ${state.config.workers} · auto ${state.config.auto} · trunk ${state.config.trunk}`))
@@ -390,7 +435,7 @@ function App({ port }) {
         : null),
     h(Box, { height: 1 },
       composer
-        ? h(Text, { color: C.accent, wrap: false }, ` ${hints}`)
+        ? h(Text, { color: C.accent, wrap: false }, ` ${composer.kind} ▸ ${composer.buf}▌`)
         : h(Text, { color: msg.startsWith("✗") ? C.red : C.green, wrap: false }, ` ${fit(msg, cols - 2)}`)),
     h(Box, { height: 1 }, composer ? null : h(Hint)),
   );
