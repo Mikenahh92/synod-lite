@@ -15,6 +15,7 @@ export function startDaemon(repoRoot: string, cfg: PitbossConfig): Promise<Daemo
   const store = new Store(repoRoot);
   const ctx: Ctx = { repo: repoRoot, cfg, store };
   const running = new Map<string, { startedAt: number; phase: string }>();
+  (ctx as Ctx).running = running;
 
   async function tick() {
     const stories = store.stories();
@@ -141,45 +142,10 @@ export async function handleAction(ctx: Ctx, action: string, id?: string, args: 
       const message = String(args.message ?? "").slice(0, 2000);
       if (!message.trim()) throw new Error("message required");
       const { runPi } = await import("./core/runner.ts");
-      const snap = store.stories().map(({ id, title, state, retries }) => ({ id, title, state, retries }));
-      const focus = store.get(String(args.focus ?? ""));
-      let focusCtx = "";
-      if (focus) {
-        const LOCKED = ["in_development", "in_review", "ready_for_merge", "merging", "done"];
-        let specEx = null;
-        try {
-          const dir = path.join(repo, focus.worktree, ".dev-agents", "specs");
-          const f = fs.readdirSync(dir).filter(n => n.endsWith(".md") && !n.startsWith("test-design")).sort().pop();
-          if (f) specEx = fs.readFileSync(path.join(dir, f), "utf8").slice(0, 1200);
-        } catch {}
-        let docCtx = "";
-        const doc = String(args.doc ?? "");
-        if (doc) {
-          try {
-            const d = doc === "Test design" ? ["specs", "test-design"] : doc === "Review" ? ["output", "review-"] : ["specs", ""];
-            const dir = path.join(repo, focus.worktree, ".dev-agents", d[0]);
-            const fname = fs.readdirSync(dir).filter(n => n.endsWith(".md") && n.startsWith(d[1])).sort().pop();
-            if (fname) docCtx = "\nThe operator is viewing the story's " + doc + " document (" + fname + "):\n" + fs.readFileSync(path.join(dir, fname), "utf8").slice(0, 2500) + "\n";
-          } catch {}
-        }
-        focusCtx = docCtx + "\nThe operator currently has story " + focus.id + " (" + focus.title + ", state " + focus.state + ") in focus.\n"
-          + (specEx ? "Its spec (excerpt):\n" + specEx + "\n" : "No spec authored yet.\n")
-          + (LOCKED.includes(focus.state)
-            ? "This story is past the spec stage: the spec is LOCKED. Do not propose spec edits; advise on progress, reviews, retries, or merging instead."
-            : "The spec is still editable (story not yet in development).");
-      }
-      const sys = [
-        "You are the synod-lite assistant, embedded in a story dashboard the operator is looking at.",
-        "Current stories (JSON): " + JSON.stringify(snap),
-        "Help the operator: explain states, summarise progress, advise next steps. When a diagram or graph would help, render it as ASCII art (monospace-safe).",
-        focusCtx,
-        "You may end your reply with exactly ONE action line: ACTION: <command>",
-        "Allowed actions: ACTION: new \"<title>\"  |  ACTION: retry <id>  |  ACTION: kill <id>",
-        "approve and merge are human gates — NEVER issue them; tell the operator to press a/m instead.",
-        "Keep replies short (terminal column width). No markdown fences.",
-      ].join("\n");
+      const focus = store.get(String(args.focus ?? "")) ?? null;
+      const sys = buildChatPrompt(ctx, message, focus, String(args.doc ?? ""));
       const log = store.logFile("chat", "chat", 0);
-      const r = await runPi(cfg, repo, sys + "\n\nOperator: " + message, log);
+      const r = await runPi(cfg, repo, sys, log);
       let raw = "";
       try { raw = fs.readFileSync(log, "utf8"); } catch { /* empty */ }
       const m = raw.match(/^ACTION:\s*(.+)$/m);
@@ -240,6 +206,84 @@ export async function isDaemonUp(port: number): Promise<boolean> {
     const res = await fetch(`http://127.0.0.1:${port}/state`);
     return res.ok;
   } catch { return false; }
+}
+
+// ── chat agent context ─────────────────────────────────────────────────────
+// Capability principle: the agent sees (at least) what the operator sees on
+// the current page — board snapshot with run status, focus story details,
+// and the exact viewed document (Spec / Test design / Review / Log tail).
+const fmtRun = (r?: { startedAt: number; phase: string }): string => {
+  if (!r) return "";
+  const sec = Math.max(0, Math.floor((Date.now() - r.startedAt) / 1000));
+  return ` [running ${r.phase} workflow, ${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, "0")}s elapsed]`;
+};
+const LOCKED_STATES = ["in_development", "in_review", "ready_for_merge", "merging", "done"];
+
+const readNewestIn = (dir: string, prefix: string): string | null => {
+  try {
+    const f = fs.readdirSync(dir).filter(n => n.startsWith(prefix) && n.endsWith(".md")).sort().pop();
+    return f ? fs.readFileSync(path.join(dir, f), "utf8") : null;
+  } catch { return null; }
+};
+
+export function buildChatPrompt(ctx: Ctx, message: string, focus?: Story | null, doc?: string): string {
+  const { store, cfg, repo } = ctx;
+  const board = store.stories().map(s =>
+    `  ${s.id} ${JSON.stringify(s.title)} ${s.state} r${s.retries}` +
+    (s.lastReview ? ` review:${s.lastReview.verdict}` : "") + fmtRun(ctx.running?.get(s.id)));
+  const out: string[] = [
+    "You are the synod-lite assistant, embedded in a story dashboard the operator is looking at.",
+    `Daemon: workers ${cfg.workers}, auto ${cfg.auto}, trunk ${cfg.trunk}.`,
+    "Current stories:",
+    ...board,
+    "Help the operator: explain states, monitor running agents (phase + elapsed are shown per story), summarise progress and reviews, advise next steps. When a diagram or graph would help, render it as ASCII art (monospace-safe).",
+  ];
+  if (focus) {
+    const last = focus.log[focus.log.length - 1];
+    out.push(
+      "",
+      `The operator currently has story ${focus.id} (${focus.title}) in focus.`,
+      `  state ${focus.state}${fmtRun(ctx.running?.get(focus.id))} · retries ${focus.retries}`,
+      `  branch ${focus.branch} · created ${focus.createdAt}`,
+      focus.lastReview ? `  last review ${focus.lastReview.verdict} — ${focus.lastReview.file}` : "  no review yet",
+      ...(focus.error ? [`  error ${focus.error}`] : []),
+      `  phases so far: ${focus.log.map(l => l.phase).join(" → ") || "none yet"}`,
+    );
+    let specEx: string | null = null;
+    try {
+      const dir = path.join(repo, focus.worktree, ".dev-agents", "specs");
+      const f = fs.readdirSync(dir).filter(n => n.endsWith(".md") && !n.startsWith("test-design")).sort().pop();
+      if (f) specEx = fs.readFileSync(path.join(dir, f), "utf8");
+    } catch { /* no spec yet */ }
+    out.push(specEx ? "Its spec (excerpt):\n" + specEx.slice(0, 1600) + "\n" : "No spec authored yet.");
+    const d = doc ?? "";
+    if (d === "Test design" || d === "Review") {
+      const [sub, prefix] = d === "Test design" ? ["specs", "test-design"] : ["output", "review-"];
+      const txt = readNewestIn(path.join(repo, focus.worktree, ".dev-agents", sub), prefix);
+      if (txt) out.push(`\nThe operator is viewing the story's ${d} document:\n` + txt.slice(0, 2500) + "\n");
+    } else if (d === "Log") {
+      let tail = "";
+      if (last) {
+        try {
+          const abs = path.join(repo, last.file);
+          if (fs.existsSync(abs)) tail = fs.readFileSync(abs, "utf8").split("\n").slice(-30).join("\n");
+        } catch { /* unreadable */ }
+      }
+      out.push(`\nThe operator is viewing the live agent log (phase ${last?.phase ?? "none"}, last 30 lines):\n` + (tail.slice(0, 3000) || "(no log output yet)") + "\n");
+    } else if (d === "Details") {
+      out.push("\nThe operator is on the Details page (fields listed above).\n");
+    }
+    out.push(LOCKED_STATES.includes(focus.state)
+      ? "This story is past the spec stage: the spec is LOCKED. Do not propose spec edits; advise on progress, reviews, retries, or merging instead."
+      : "The spec is still editable (story not yet in development).");
+  }
+  out.push(
+    "You may end your reply with exactly ONE action line: ACTION: <command>",
+    'Allowed actions: ACTION: new "<title>"  |  ACTION: retry <id>  |  ACTION: kill <id>',
+    "approve and merge are human gates — NEVER issue them; tell the operator to press a/m instead.",
+    "Keep replies short (terminal column width). No markdown fences.",
+  );
+  return out.join("\n") + "\n\nOperator: " + message;
 }
 
 export async function callDaemon<T = any>(port: number, action: string, id?: string, args?: Record<string, any>): Promise<T> {

@@ -4,7 +4,7 @@
   "description": "Story harness for pi + dev-agents: worktrees, gated pipeline, TUI dashboard",
   "type": "module",
   "bin": { "synod-lite": "./bin/synod-lite.js" },
-  "scripts": { "test": "node --test test/e2e.test.js" },
+  "scripts": { "test": "node --test" },
   "engines": { "node": ">=20" },
   "dependencies": { "ink": "^5.1.0", "react": "^18.3.1" }
 }
