@@ -1,2 +1,2 @@
-Vendored from https://github.com/Mikenahh92/dev-agents @ 43054d9 (spec/test-design workflows require ASCII art for diagrams).
+Vendored from https://github.com/Mikenahh92/dev-agents @ 6552f03 (XML-tagged instructions).
 Refresh with: cp -R ../dev-agents/template/* ./template/

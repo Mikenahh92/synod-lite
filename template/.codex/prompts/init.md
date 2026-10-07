@@ -1,8 +1,9 @@
-Run the dev-agents `init` workflow now.
+<task>Run the dev-agents `init` workflow now.</task>
 
-Before anything else, load context exactly as the engine requires:
-1. Read `.dev-agents/config.yaml` and apply it.
-2. Read `.dev-agents/workflows/init/workflow.yaml` and activate the agent it names (from `.dev-agents/agents/`) — follow that agent's rules for the whole task.
-3. Execute the workflow (`workflow.yaml` + `instructions.md`) through the engine in `.dev-agents/core/tasks/workflow.xml`.
+<load_context order="strict">
+  <step n="1">Read `.dev-agents/config.yaml` and apply it.</step>
+  <step n="2">Read `.dev-agents/workflows/init/workflow.yaml` and activate the agent it names (from `.dev-agents/agents/`) — follow that agent's rules for the whole task.</step>
+  <step n="3">Execute the workflow (`workflow.yaml` + `instructions.md`) through the engine in `.dev-agents/core/tasks/workflow.xml`.</step>
+</load_context>
 
-Arguments: $ARGUMENTS
+<arguments>$ARGUMENTS</arguments>
