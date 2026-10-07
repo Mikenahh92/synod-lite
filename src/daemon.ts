@@ -279,6 +279,7 @@ export function buildChatPrompt(ctx: Ctx, message: string, focus?: Story | null,
   }
   out.push(
     "You may end your reply with exactly ONE action line: ACTION: <command>",
+    "CRITICAL: only issue an ACTION when the operator explicitly asked you to do it (create/retry/kill). For questions or status checks, reply with advice only — never act unrequested.",
     'Allowed actions: ACTION: new "<title>"  |  ACTION: retry <id>  |  ACTION: kill <id>',
     "approve and merge are human gates — NEVER issue them; tell the operator to press a/m instead.",
     "Keep replies short (terminal column width). No markdown fences.",
