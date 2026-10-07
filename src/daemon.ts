@@ -47,6 +47,7 @@ export function startDaemon(repoRoot: string, cfg: PitbossConfig): Promise<Daemo
         runningIds: [...running.keys()],
         runs: Object.fromEntries(running),
         config: { workers: cfg.workers, maxRetries: cfg.maxRetries, auto: cfg.auto, trunk: cfg.trunk },
+        pendingProposal: (ctx as Ctx).pending ?? null,
         tails: Object.fromEntries(stories.map(s => {
           const last = s.log[s.log.length - 1];
           if (!last) return [s.id, ""];
@@ -153,13 +154,19 @@ export async function handleAction(ctx: Ctx, action: string, id?: string, args: 
       if (m && r.code === 0) {
         action = m[1].trim();
         let ok = false;
-        let newM; let retryK;
+        let newM; let retryK; let resetM;
         if ((newM = action.match(/^new\s+"(.+)"$/))) {
           try { actionResult = (await handleAction(ctx, "new", undefined, { title: newM[1] })).message ?? "story created"; ok = true; }
           catch (e: any) { actionResult = "✗ " + e.message; }
         } else if ((retryK = action.match(/^(retry|kill)\s+(\S+)$/))) {
           try { await handleAction(ctx, retryK[1], retryK[2], {}); actionResult = `${retryK[1]} ${retryK[2]} ✓`; ok = true; }
           catch (e: any) { actionResult = "✗ " + e.message; }
+        } else if ((resetM = action.match(/^reset\s+(\S+)\s+--to\s+(spec|develop|review|mergeable)(\s+--code)?$/))) {
+          // destructive → never executed directly: becomes a proposal the
+          // operator must confirm in the dashboard (y)
+          ctx.pending = { action: "reset", id: resetM[1], args: { to: resetM[2], code: !!resetM[3] }, at: Date.now() };
+          actionResult = `reset ${resetM[1]} → ${resetM[2]}${resetM[3] ? " +code" : ""} proposed — operator must confirm (y)`;
+          ok = true;
         } else { actionResult = "✗ unsupported action (human gates: approve/merge are yours)"; }
         raw = raw.replace(m[0], "").trimEnd();
       }
@@ -203,6 +210,14 @@ export async function handleAction(ctx: Ctx, action: string, id?: string, args: 
       const { removeWorktree } = await import("./core/git.ts");
       if (s.state !== "merging") removeWorktree(repo, s.worktree, s.branch);
       return store.update(s.id, { state: "cancelled" });
+    }
+    case "proposal": {
+      // resolve an agent-proposed action: accept executes it, reject drops it
+      const p = (ctx as Ctx).pending;
+      (ctx as Ctx).pending = undefined;
+      if (!p) throw new Error("no pending proposal");
+      if (!args.accept) return { resolved: "rejected" };
+      return handleAction(ctx, p.action, p.id, p.args ?? {});
     }
     case "merge": {
       const s = mustGet(store, id!);
@@ -255,6 +270,14 @@ export function buildChatPrompt(ctx: Ctx, message: string, focus?: Story | null,
     (s.lastReview ? ` review:${s.lastReview.verdict}` : "") + fmtRun(ctx.running?.get(s.id)));
   const out: string[] = [
     "You are the synod-lite assistant, embedded in a story dashboard the operator is looking at.",
+    "── app guide (how this app works) ──",
+    "Lifecycle: drafted →(agent: spec)→ ready_for_user_review →[operator approves]→ in_development →(agent: test-design+implement)→ in_review →(agent: review)→ PASS → ready_for_merge →[operator merges]→ done.",
+    "Review FAIL → automatic re-develop with feedback, up to maxRetries, then blocked. failed/blocked can be retried; cancelled stories are gone.",
+    "One story = one git branch + worktree (story/s-00n). Merge = squash commit into the trunk branch.",
+    "Human gates (operator keys in the TUI): a approve spec · m merge · R reset to a phase (y-confirmed) · K kill (y-confirmed).",
+    "Your actions: new/retry/kill execute immediately (only when explicitly asked). A reset request becomes a PROPOSAL — the operator must confirm it with y in the dashboard; tell them a confirm bar appears.",
+    "TUI keys: ↑↓ select · ⏎ open story · ←→ document pages · f text filter · s status filter · n new · c chat · q quit. CLI mirrors all actions (new/list/show/approve/retry/reset/kill/merge/log).",
+    `Config: workers ${cfg.workers} (parallel agents) · maxRetries ${cfg.maxRetries} · auto ${cfg.auto} (spec: stops for approval; full: auto-merges) · trunk ${cfg.trunk}.`,
     `Daemon: workers ${cfg.workers}, auto ${cfg.auto}, trunk ${cfg.trunk}.`,
     "Current stories:",
     ...board,
@@ -301,8 +324,8 @@ export function buildChatPrompt(ctx: Ctx, message: string, focus?: Story | null,
   }
   out.push(
     "You may end your reply with exactly ONE action line: ACTION: <command>",
-    "CRITICAL: only issue an ACTION when the operator explicitly asked you to do it (create/retry/kill). For questions or status checks, reply with advice only — never act unrequested.",
-    'Allowed actions: ACTION: new "<title>"  |  ACTION: retry <id>  |  ACTION: kill <id>',
+    "CRITICAL: only issue an ACTION when the operator explicitly asked you to do it. For questions or status checks, reply with advice only — never act unrequested.",
+    'Allowed actions: ACTION: new "<title>"  |  ACTION: retry <id>  |  ACTION: kill <id>  |  ACTION: reset <id> --to spec|develop|review|mergeable [--code] (becomes an operator-approved proposal)',
     "approve and merge are human gates — NEVER issue them; tell the operator to press a/m instead.",
     "Keep replies short (terminal column width). No markdown fences.",
   );

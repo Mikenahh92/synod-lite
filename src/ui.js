@@ -55,9 +55,23 @@ function App({ port }) {
   const [chat, setChat] = useState(null);             // { msgs: [{role, text}], busy }
   const [filter, setFilter] = useState({ text: "", status: "all" });
   const [detailView, setDetailView] = useState(null); // { id, docs: [{name, lines}], di, scroll, locked, state }
+  const [confirm, setConfirm] = useState(null);       // { label, run, onReject } — y/N gate for destructive actions
+  const seenProposal = { at: 0 };
 
   useEffect(() => {
-    const iv = setInterval(() => fetchState(port).then(setState).catch(() => {}), 1000);
+    const iv = setInterval(() => fetchState(port).then(r => {
+      setState(r);
+      // agent-proposed action (reset) arrives as a confirm bar — show once
+      if (r.pendingProposal && r.pendingProposal.at !== seenProposal.at) {
+        seenProposal.at = r.pendingProposal.at;
+        const p = r.pendingProposal;
+        setConfirm({
+          label: `agent proposes: ${p.action} ${p.id} → ${p.args.to}${p.args.code ? " + code wipe" : ""}`,
+          run: () => act("proposal", { accept: true }),
+          onReject: () => act("proposal", { accept: false }),
+        });
+      }
+    }).catch(() => {}), 1000);
     fetchState(port).then(setState).catch(() => {});
     return () => clearInterval(iv);
   }, [port]);
@@ -85,7 +99,7 @@ function App({ port }) {
   const cur = filtered.length ? filtered[Math.min(sel, filtered.length - 1)] : undefined;
 
   const act = useCallback(async (action, args = {}) => {
-    if (!cur && action !== "new") {
+    if (!cur && action !== "new" && action !== "proposal") {
       setMsg("✗ no story selected (filter has no matches) — esc to clear");
       setTimeout(() => setMsg(""), 4000);
       return;
@@ -165,7 +179,8 @@ function App({ port }) {
         else if (composer.kind === "reset") {
           const parts = text.split(/\s+/);
           const to = parts[0], code = parts.includes("code");
-          if (["spec", "develop", "review", "mergeable"].includes(to)) act("reset", { to, code });
+          if (["spec", "develop", "review", "mergeable"].includes(to))
+            setConfirm({ label: `reset ${cur.id} → ${to}${code ? " + code wipe" : ""}`, run: () => act("reset", { to, code }) });
           else { setMsg("✗ reset: spec | develop | review | mergeable  (+ code)"); setTimeout(() => setMsg(""), 4000); }
         }
         else setFilter(f => ({ ...f, text }));
@@ -174,6 +189,12 @@ function App({ port }) {
       if (key.backspace || key.delete) { setComposer({ ...composer, buf: composer.buf.slice(0, -1) }); return; }
       const paste = pasteOf(ch, key);
       if (paste) { setComposer({ ...composer, buf: (composer.buf + paste).slice(0, 80) }); return; }
+      return;
+    }
+    // ── confirm gate: destructive actions + agent proposals wait for y ──
+    if (confirm) {
+      if (ch === "y" || ch === "Y" || key.return) { const c = confirm; setConfirm(null); c.run(); return; }
+      if (key.escape || ch === "n" || ch === "N") { const c = confirm; setConfirm(null); if (c.onReject) c.onReject(); return; }
       return;
     }
     if (key.escape) {
@@ -225,7 +246,7 @@ function App({ port }) {
       case "r": act("retry"); break;
       case "R": if (cur) setComposer({ kind: "reset", buf: "" }); break;
       case "m": act("merge"); break;
-      case "K": act("kill"); break;
+      case "K": if (cur) setConfirm({ label: `kill ${cur.id} (worktree removed)`, run: () => act("kill") }); break;
     }
   });
 
@@ -446,7 +467,13 @@ function App({ port }) {
       composer
         ? h(Text, { color: C.accent, wrap: false }, ` ${composer.kind} ▸ ${composer.buf}▌`)
         : h(Text, { color: msg.startsWith("✗") ? C.red : C.green, wrap: false }, ` ${fit(msg, cols - 2)}`)),
-    h(Box, { height: 1 }, composer ? null : h(Hint)),
+    h(Box, { height: 1 },
+      confirm
+        ? [h(Text, { color: C.yellow, wrap: false }, ` ? ${confirm.label} — `),
+           h(Text, { bold: true, color: C.accent, wrap: false }, "y confirm"),
+           h(Text, { color: C.yellow, wrap: false }, " · "),
+           h(Text, { color: C.dim, wrap: false }, "esc cancel")]
+        : composer ? null : h(Hint)),
   );
 }
 

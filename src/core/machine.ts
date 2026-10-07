@@ -5,7 +5,11 @@ import { type PitbossConfig } from "./config.ts";
 import { runPi } from "./runner.ts";
 import * as g from "./git.ts";
 
-export interface Ctx { repo: string; cfg: PitbossConfig; store: Store; running?: Map<string, { startedAt: number; phase: string }> }
+export interface Ctx {
+  repo: string; cfg: PitbossConfig; store: Store;
+  running?: Map<string, { startedAt: number; phase: string }>;
+  pending?: { action: string; id?: string; args: Record<string, any>; at: number };
+}
 
 const NEWEST = (dir: string, prefix: string): string | null => {
   if (!fs.existsSync(dir)) return null;
