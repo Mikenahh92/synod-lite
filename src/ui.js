@@ -162,6 +162,12 @@ function App({ port }) {
         setComposer(null);
         if (!text) { if (composer.kind === "filter") setFilter(f => ({ ...f, text: "" })); return; }
         if (composer.kind === "new") act("new", { title: text });
+        else if (composer.kind === "reset") {
+          const parts = text.split(/\s+/);
+          const to = parts[0], code = parts.includes("code");
+          if (["spec", "develop", "review", "mergeable"].includes(to)) act("reset", { to, code });
+          else { setMsg("✗ reset: spec | develop | review | mergeable  (+ code)"); setTimeout(() => setMsg(""), 4000); }
+        }
         else setFilter(f => ({ ...f, text }));
         return;
       }
@@ -217,6 +223,7 @@ function App({ port }) {
       case "c": setChat({ msgs: [], draft: "" }); break; // opens chat; typing goes straight in
       case "a": act("approve"); break;
       case "r": act("retry"); break;
+      case "R": if (cur) setComposer({ kind: "reset", buf: "" }); break;
       case "m": act("merge"); break;
       case "K": act("kill"); break;
     }
@@ -311,7 +318,9 @@ function App({ port }) {
   // splitting of a flat string, so nothing can mangle the wording
   const K2 = (t) => [t, true], D2 = (t) => [t, false];
   const hintSegments = composer
-    ? [D2(`${composer.kind} ▸ ${composer.buf}▌   `), K2("⏎ apply"), D2(" · "), K2("esc cancel")]
+    ? [D2(composer.kind === "reset"
+        ? `reset ▸ ${composer.buf}▌  (spec|develop|review|mergeable, + code)   `
+        : `${composer.kind} ▸ ${composer.buf}▌   `), K2("⏎ apply"), D2(" · "), K2("esc cancel")]
     : chat
     ? [D2("type message · "), K2("⏎ send"), D2(" · "), K2("esc close chat")]
     : mode === "detail"
@@ -319,7 +328,7 @@ function App({ port }) {
     : [K2("↑↓ move"), D2(" · "), K2("⏎ open story"), D2(" · "), K2("f filter"), D2(" · "), K2("s status"),
        ...(filterInfo ? [D2(" · "), K2("esc clear")] : []),
        D2(" · "), K2("n new"), D2(" · "), K2("a approve"), D2(" · "), K2("r retry"), D2(" · "), K2("m merge"),
-       D2(" · "), K2("K kill"), D2(" · "), K2("c chat"), D2(" · "), K2("q quit")];
+       D2(" · "), K2("K kill"), D2(" · "), K2("R reset"), D2(" · "), K2("c chat"), D2(" · "), K2("q quit")];
   const Hint = () => {
     // budget-aware render: truncate at SEGMENT boundaries with an ellipsis —
     // never mid-key (P2: 110-col terminals cut "f filter" into "f filte")

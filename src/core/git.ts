@@ -27,6 +27,15 @@ export function removeWorktree(repo: string, wtRel: string, branch?: string): vo
   if (branch) { try { git(repo, "branch", "-D", branch); } catch { /* ignore */ } }
 }
 
+// hard-reset a story branch back to the trunk tip — discards ALL commits on
+// the story branch (used by story reset with code reset). Docs in the
+// worktree (.dev-agents) are left in place as history.
+export function resetWorktreeToTrunk(repo: string, wtRel: string, trunk: string): void {
+  const abs = path.join(repo, wtRel);
+  if (!fs.existsSync(abs)) throw new Error(`worktree missing: ${wtRel}`);
+  git(abs, "reset", "--hard", trunk);
+}
+
 export function isClean(repo: string): boolean {
   return git(repo, "status", "--porcelain") === "";
 }

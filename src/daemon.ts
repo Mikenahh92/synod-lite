@@ -175,6 +175,28 @@ export async function handleAction(ctx: Ctx, action: string, id?: string, args: 
       if (s.state !== "failed" && s.state !== "blocked") throw new Error(`${s.id} is '${s.state}' — only failed/blocked can retry`);
       return store.update(s.id, { state: "ready_for_user_review", approved: true, retries: 0, error: undefined });
     }
+    case "reset": {
+      // reset a story to a chosen phase; optionally hard-reset its branch to
+      // trunk (--code) discarding all story commits. Human action (CLI/TUI).
+      const s = mustGet(store, id!);
+      if (ctx.running?.has(s.id)) throw new Error(`${s.id} is running — kill or wait before resetting`);
+      if (s.state === "cancelled") throw new Error(`${s.id} was cancelled (worktree removed) — create a new story instead`);
+      if (s.state === "done") throw new Error(`${s.id} is done (already merged into ${cfg.trunk}) — reset would not un-merge; create a new story instead`);
+      const TO: Record<string, { state: Story["state"]; approved: boolean; retries: number }> = {
+        spec: { state: "drafted", approved: false, retries: 0 },
+        develop: { state: "in_development", approved: true, retries: 0 },
+        review: { state: "in_review", approved: true, retries: 0 },
+        mergeable: { state: "ready_for_merge", approved: true, retries: 0 },
+      };
+      const to = String(args.to ?? "");
+      const patch = TO[to];
+      if (!patch) throw new Error(`invalid reset target '${to}' — use spec | develop | review | mergeable`);
+      if (args.code) {
+        const { resetWorktreeToTrunk } = await import("./core/git.ts");
+        resetWorktreeToTrunk(repo, s.worktree, cfg.trunk);
+      }
+      return store.update(s.id, { ...patch, error: undefined });
+    }
     case "kill": {
       const s = mustGet(store, id!);
       if (s.state === "done" || s.state === "cancelled") throw new Error(`${s.id} already ${s.state}`);

@@ -14,6 +14,8 @@ Usage: synod-lite <command> [args]
   show <id>            story details (state, retries, last review, logs)
   approve <id>         approve the spec — development starts automatically (daemon)
   retry <id>           reset a failed/blocked story to re-develop (retries reset)
+  reset <id> --to <phase> [--code]   reset to spec|develop|review|mergeable; --code also
+                       hard-resets the story branch to trunk (discards commits)
   kill <id>            remove worktree, mark cancelled
   merge <id>           squash-merge a done story into the trunk branch
   log <id>             tail the latest phase log
@@ -110,6 +112,13 @@ async function main() {
     }
     case "approve": await action("approve", rest[0]); console.log(`approved ${rest[0]} — development will start`); break;
     case "retry": await action("retry", rest[0]); console.log(`reset ${rest[0]} for re-development`); break;
+    case "reset": {
+      const to = rest.includes("--to") ? rest[rest.indexOf("--to") + 1] : "";
+      const code = rest.includes("--code");
+      const s = await action("reset", rest[0], { to, code });
+      console.log(`reset ${s.id} → ${s.state}${code ? " (branch reset to " + cfg.trunk + ")" : ""}`);
+      break;
+    }
     case "kill": await action("kill", rest[0]); console.log(`cancelled ${rest[0]} (worktree removed)`); break;
     case "merge": {
       const s = await action("merge", rest[0]);
